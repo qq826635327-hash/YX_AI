@@ -1,0 +1,86 @@
+# AI Drama Studio 后端运行时配置
+# 这些是开发环境的默认值，可以通过环境变量覆盖
+
+app:
+  name: "AI Drama Studio"
+  version: "0.1.0"
+  host: "127.0.0.1"
+  port: 8000
+  # 前端构建产物目录，启动时若存在则托管
+  frontend_dist: "../frontend/dist"
+  # CORS 允许来源（开发环境允许 localhost:5173）
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+    - "http://localhost:8000"
+
+database:
+  # SQLite 数据库文件路径（相对于 backend 目录）
+  url: "sqlite:///../data/db/app.sqlite"
+  echo: false
+
+storage:
+  # 项目文件根目录（绝对路径或相对于 backend 目录）
+  projects_root: "../data/projects"
+  # 允许的素材类型
+  allowed_image_types: ["png", "jpg", "jpeg", "webp", "gif"]
+  allowed_video_types: ["mp4", "webm", "mov", "mkv"]
+
+comfyui:
+  base_url: "http://127.0.0.1:8188"
+  timeout: 300
+  # ComfyUI 输出目录（用于轮询结果）
+  output_dir: ""
+  # 是否启用（未配置 ComfyUI 时设为 false）
+  enabled: false
+
+security:
+  # ⚠️ 警告：此为开发环境默认密钥，生产环境必须通过环境变量 ADS_ENCRYPTION_KEY 覆盖！
+  # 生成方法: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  encryption_key: "ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg="
+  # 是否启用 Basic Auth 鉴权（建议局域网部署时启用，用户名/密码默认 admin/admin）
+  basic_auth_enabled: false
+  basic_auth_user: "admin"
+  basic_auth_password: "admin"
+
+tasks:
+  # Huey 任务队列配置
+  backend: "sqlite"
+  # Huey 存储路径
+  huey_path: "../data/db/huey.sqlite"
+  # 任务最大重试次数
+  max_retry: 3
+  # 任务超时（秒）
+  timeout: 600
+  # 生图时是否保存 prompt 文本文件（prompts/ 目录）
+  save_prompts: false
+
+llm:
+  # 剧本解析用的 LLM 配置（可选，未配置时使用规则解析）
+  enabled: false
+  provider: "openai"
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "gpt-4o-mini"
+  timeout: 120
+
+image_hosting:
+  # 图床配置（用于将本地图片上传到公网，供需要公网 URL 的 API 使用，如 Agnes 视频）
+  # 留空 = 不启用图床
+  provider: ""  # "smms" | ""
+  # SM.MS API Secret Token（也可通过环境变量 ADS_SMMS_TOKEN 设置）
+  smms_token: ""
+
+reference_prompt:
+  # 参考图 prompt 自动拼接开关
+  enabled: true
+  # 整体模板：{items}=拼接后的描述行, {original_prompt}=用户原始提示词
+  template: "{items}\n{original_prompt}"
+  # 单条参考图描述：{index}=序号, {label}=参考图标签
+  item_template: "图{index}是{label}"
+  # 多条之间的分隔符
+  separator: "、"
+  # 描述行结尾符号
+  item_terminator: "。"
+  # 描述行位置：prefix=前置, suffix=后置
+  position: "prefix"

@@ -126,31 +126,61 @@ def _clear_other_defaults(session: Session, exclude_id: Optional[str] = None, au
 def _sync_provider_models(
     session: Session,
     provider: ApiProvider,
-    models_payload: Optional[list[dict]],
+    models_payload: Optional[list],
     fallback_model: Optional[str] = None,
 ) -> None:
-    """同步 Provider 的模型列表：删除旧模型，按 payload 创建新模型。"""
+    """同步 Provider 的模型列表：增量更新，保留已有 param_specs/capabilities。
+
+    models_payload 的元素可以是 dict 或 ProviderModelItem（Pydantic 模型）。
+    """
     if not models_payload and fallback_model:
         models_payload = [{"model_name": fallback_model, "tags": _infer_model_tags(fallback_model), "sort_order": 0}]
 
     if not models_payload:
         return
 
-    # 删除旧模型
-    for old in list(provider.models or []):
-        session.delete(old)
+    # 构建已有模型的映射（按 model_name 查找）
+    existing_map: dict[str, ProviderModel] = {m.model_name: m for m in provider.models or []}
+    requested_names = set()
 
-    # 创建新模型
+    def _get(item, key, default=None):
+        """兼容 dict 和 Pydantic 模型的取值。"""
+        if isinstance(item, dict):
+            return item.get(key, default)
+        return getattr(item, key, default)
+
     for idx, item in enumerate(models_payload):
-        if not item.get("model_name"):
+        name = str(_get(item, "model_name", "")).strip()
+        if not name:
             continue
-        pm = ProviderModel(
-            provider_id=provider.id,
-            model_name=item["model_name"].strip(),
-            tags=item.get("tags", []) or _infer_model_tags(item["model_name"]),
-            sort_order=item.get("sort_order", idx),
-        )
-        session.add(pm)
+        requested_names.add(name)
+
+        if name in existing_map:
+            # 更新已有记录（保留 param_specs/capabilities 除非 payload 中有新值）
+            m = existing_map[name]
+            m.tags = _get(item, "tags") or m.tags or _infer_model_tags(name)
+            m.sort_order = _get(item, "sort_order", idx)
+            # 仅在 payload 显式传入时覆盖 param_specs/capabilities
+            if _get(item, "param_specs") is not None:
+                m.param_specs = _get(item, "param_specs")
+            if _get(item, "capabilities") is not None:
+                m.capabilities = _get(item, "capabilities")
+        else:
+            # 新建模型
+            m = ProviderModel(
+                provider_id=provider.id,
+                model_name=name,
+                tags=_get(item, "tags") or _infer_model_tags(name),
+                sort_order=_get(item, "sort_order", idx),
+                param_specs=_get(item, "param_specs"),
+                capabilities=_get(item, "capabilities"),
+            )
+        session.add(m)
+
+    # 删除不在 payload 中的旧模型
+    for m in list(provider.models or []):
+        if m.model_name not in requested_names:
+            session.delete(m)
 
 
 def _infer_model_tags(model_name: str) -> list[str]:
@@ -172,7 +202,12 @@ def provider_to_view(provider: ApiProvider) -> dict:
 
     data = serialize_model(provider)
     # 解密并脱敏展示
-    plain = decrypt_secret(provider.api_key_encrypted) if provider.api_key_encrypted else ""
+    plain = ""
+    if provider.api_key_encrypted:
+        try:
+            plain = decrypt_secret(provider.api_key_encrypted)
+        except Exception:
+            plain = "[解密失败]"
     data["api_key_masked"] = mask_secret(plain)
     # 移除原始敏感字段，避免意外泄露
     data.pop("api_key_encrypted", None)
@@ -184,6 +219,8 @@ def provider_to_view(provider: ApiProvider) -> dict:
             "model_name": m.model_name,
             "tags": m.tags or [],
             "sort_order": m.sort_order,
+            "param_specs": m.param_specs,
+            "capabilities": m.capabilities,
         }
         for m in sorted(provider.models or [], key=lambda x: x.sort_order)
     ]

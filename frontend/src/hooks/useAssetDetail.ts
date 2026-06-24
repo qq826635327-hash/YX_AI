@@ -5,6 +5,7 @@ import { usePendingTasks, useDeleteAsset } from "./useApi";
 import { useAssets } from "./useBusiness";
 import { assetsApi } from "@/api/assets";
 import { toast } from "@/stores/ui";
+import { useConfirm } from "@/components/ConfirmDialog";
 import type { Asset, GenerationTask } from "@/types";
 
 interface UseAssetDetailOptions {
@@ -24,6 +25,7 @@ export function useAssetDetail({
   onSetPrimary,
   onRefetchEntity,
 }: UseAssetDetailOptions) {
+  const confirm = useConfirm();
 
   // ---------- 素材列表 ----------
   const {
@@ -39,8 +41,8 @@ export function useAssetDetail({
   const deleteAssetMutation = useDeleteAsset();
 
   const handleDeleteAsset = useCallback(
-    (assetId: string) => {
-      if (!confirm("确认删除这张图片？")) return;
+    async (assetId: string) => {
+      if (!(await confirm({ title: "确认删除这张图片？", variant: "destructive" }))) return;
       deleteAssetMutation.mutate(assetId, {
         onSuccess: () => {
           refetchAssets();

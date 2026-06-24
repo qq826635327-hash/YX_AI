@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.serialization import serialize_model, serialize_models
@@ -13,6 +14,10 @@ from app.models import Character
 from app.schemas.business import CharacterCreate, CharacterUpdate
 from app.schemas.common import ok
 from app.services import business_service
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
 
 router = APIRouter(prefix="/projects/{project_id}/characters", tags=["characters"])
 
@@ -41,6 +46,28 @@ async def api_create_character(
     """新建角色。"""
     char = business_service.create_entity(session, Character, project_id, payload.model_dump())
     return ok(serialize_model(char), message="角色已创建")
+
+
+@router.post("/batch-delete")
+async def api_batch_delete_characters(
+    project_id: str,
+    payload: BatchDeleteRequest,
+    session: Session = Depends(get_session),
+):
+    """批量删除角色。"""
+    deleted = 0
+    errors = []
+    for cid in payload.ids:
+        char = business_service.get_one(session, Character, cid)
+        if char and char.project_id == project_id:
+            success = business_service.delete_entity(session, Character, cid)
+            if success:
+                deleted += 1
+            else:
+                errors.append({"id": cid, "error": "删除失败"})
+        else:
+            errors.append({"id": cid, "error": "角色不存在"})
+    return ok({"deleted": deleted, "errors": errors}, message=f"已删除 {deleted} 个角色")
 
 
 @router.get("/{character_id}")

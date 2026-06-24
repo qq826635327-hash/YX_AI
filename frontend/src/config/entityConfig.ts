@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import type { Character, Scene, Prop } from "@/types";
+import type { BaseEntity, Character, Scene, Prop } from "@/types";
 
 /** 编辑框字段配置 */
 export interface EditFieldConfig {
@@ -14,7 +14,7 @@ export interface EditFieldConfig {
 }
 
 /** 实体类型配置（驱动通用页面） */
-export interface EntityConfig<T> {
+export interface EntityConfig<T extends BaseEntity> {
   /** 实体类型标识 */
   entityType: "character" | "scene" | "prop";
   /** 页面标题 */
@@ -33,6 +33,8 @@ export interface EntityConfig<T> {
   tabFilter?: (entity: T, activeTab: string) => boolean;
   /** 角标函数（可选，仅角色） */
   getBadge?: (entity: T) => string | undefined;
+  /** 副标题函数（可选，如性别/年龄） */
+  getSubtitle?: (entity: T) => string | undefined;
   /** 编辑框字段配置 */
   editFields: EditFieldConfig[];
   /** 从实体提取初始表单值 */
@@ -70,8 +72,23 @@ export const characterConfig: EntityConfig<Character> = {
   tabFilter: (char, activeTab) =>
     activeTab === "all" || char.char_type === activeTab,
   getBadge: (char) => charTypeMap[char.char_type],
+  getSubtitle: (char) => {
+    const parts = [char.gender, char.age].filter(Boolean);
+    return parts.length > 0 ? parts.join(" · ") : undefined;
+  },
   editFields: [
     { name: "name", label: "名称 *", type: "text", placeholder: "角色名称", required: true },
+    {
+      name: "gender",
+      label: "性别",
+      type: "tabs",
+      options: [
+        { value: "男", label: "男" },
+        { value: "女", label: "女" },
+        { value: "其他", label: "其他" },
+      ],
+    },
+    { name: "age", label: "年龄", type: "text", placeholder: "如：25岁、少年、中年" },
     {
       name: "char_type",
       label: "分类",
@@ -87,12 +104,16 @@ export const characterConfig: EntityConfig<Character> = {
   ],
   getInitialValues: (char) => ({
     name: char?.name || "",
+    gender: char?.gender || "",
+    age: char?.age || "",
     char_type: char?.char_type || "supporting",
     description: char?.description || "",
     settings: char?.settings || "",
   }),
   buildSubmitData: (formData) => ({
     name: formData.name?.trim(),
+    gender: formData.gender,
+    age: formData.age,
     char_type: formData.char_type,
     description: formData.description,
     settings: formData.settings,
@@ -113,16 +134,19 @@ export const sceneConfig: EntityConfig<Scene> = {
   editFields: [
     { name: "name", label: "名称 *", type: "text", placeholder: "场景名称", required: true },
     { name: "description", label: "描述", type: "textarea", placeholder: "场景描述", rows: 3 },
+    { name: "camera_hint", label: "镜头建议", type: "text", placeholder: "如：远景/全景/中景/室内/室外/白天" },
     { name: "settings", label: "设定（用于生成）", type: "textarea", placeholder: "环境、氛围等生成提示词", rows: 3 },
   ],
   getInitialValues: (scene) => ({
     name: scene?.name || "",
     description: scene?.description || "",
+    camera_hint: scene?.camera_hint || "",
     settings: scene?.settings || "",
   }),
   buildSubmitData: (formData) => ({
     name: formData.name?.trim(),
     description: formData.description,
+    camera_hint: formData.camera_hint,
     settings: formData.settings,
   }),
   getDialogTitle: (scene) => (scene ? "编辑场景" : "新建场景"),

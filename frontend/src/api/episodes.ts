@@ -32,4 +32,7 @@ export const shotsApi = {
     unwrapFull<Shot>(http.patch(`shots/${id}`, { json: payload })),
 
   delete: (id: string) => unwrapFull<null>(http.delete(`shots/${id}`)),
+
+  reorder: (episodeId: string, items: { id: string; sort_order: number }[]) =>
+    unwrapFull<Shot[]>(http.post(`episodes/${episodeId}/shots/reorder`, { json: { items } })),
 };

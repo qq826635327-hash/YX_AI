@@ -9,22 +9,25 @@
 | --- | --- | --- |
 | 00 | [快速开始](./00-快速开始.md) | 环境准备、启动后端 / 前端、第一个生成流程跑通 |
 | 01 | [项目结构与代码地图](./01-项目结构与代码地图.md) | 目录树、关键文件索引、"我要加新功能去哪改" |
-| 02 | [后端架构](./02-后端架构.md) | FastAPI + SQLModel + WebSocket + Huey 任务队列 |
+| 02 | [后端架构](./02-后端架构.md) | FastAPI + SQLModel + WebSocket + asyncio 任务队列 |
 | 03 | [前端架构](./03-前端架构.md) | React + TanStack Query + Zustand + Vite + Tailwind |
 | 04 | [通用 CRUD 模式](./04-通用CRUD模式.md) | 角色/场景/道具/剧集/分镜的抽象做法 |
 | 05 | [Provider 与 ComfyUI 对接](./05-Provider与ComfyUI对接.md) | 新增 AI Provider 的步骤 |
 | 06 | [任务队列与 WebSocket 推送](./06-任务队列与WebSocket推送.md) | 任务生命周期、状态推送 |
 | 07 | [日志监控开发指南](./07-日志监控开发指南.md) | **给 AI 用的事实日志（前后端错误）** |
 | 08 | [常见 Bug 与注意事项](./08-常见Bug与注意事项.md) | **历次踩坑记录、AI 改代码前必看** |
-| 09 | [测试与调试指南](./09-测试与调试指南.md) | 单元 / 集成 / 手动测试、调试技巧 |
+| 09 | [Agents 详细参考](./09-Agents详细参考.md) | 编码规范、文档体系、上下文管理等 AI 执行细则 |
+| 13 | [测试与调试指南](./13-测试与调试指南.md) | 单元 / 集成 / 手动测试、调试技巧 |
 | 10 | [Phase 路线图与重构计划](./10-Phase路线图与重构计划.md) | 后续要做什么、按什么顺序 |
+| 11 | [核心数据流](./11-核心数据流.md) | 4 条关键数据流链路的完整路径 |
+| 12 | [文件存储约定](./12-文件存储约定.md) | 目录结构、命名规则、路径解析、同步机制 |
 | — | [CHANGELOG](./CHANGELOG.md) | 每次执行任务后的变更记录 |
 
 ## 项目一句话总结
 
 AI Drama Studio 是一个面向短剧 / 短片生产的 Web 工作台：
 
-- **后端**：FastAPI + SQLModel（SQLite WAL）+ WebSocket + Huey
+- **后端**：FastAPI + SQLModel（SQLite WAL）+ WebSocket + asyncio
 - **前端**：React 18 + Vite + Tailwind + TanStack Query + Zustand
 - **核心流程**：项目 → 剧本 → 自动解析出角色/场景/道具/剧集/分镜 → AI 生成图片/视频 → 资产库 → 导出
 - **多 Provider**：内置 Agnes（云端），预留 ComfyUI（本地工作流），Provider 通过 Handler 注册
@@ -48,9 +51,9 @@ AI Drama Studio 是一个面向短剧 / 短片生产的 Web 工作台：
 
 1. **修改代码前先看 `08-常见Bug与注意事项.md`**，避免重蹈覆辙。
 2. **新增实体**（除角色/场景/道具/剧集/分镜/任务/资产/项目/剧本/Provider/工作流/分镜关联）时，先和用户确认是否要复用 `business_service` 的通用 CRUD。
-3. **改 API** 时同步检查 `doc/产品手册/A-完整路由表.md`，若行为变化要更新。
-4. **改前端组件**时同步检查 `doc/产品手册/` 里对应模块的产品手册。
-5. **完成任务后**：必须更新 `CHANGELOG.md` 和相关模块的产品手册 / 开发手册（日志 / 监控相关改动需同步更新 `07-日志监控开发指南.md`）。
+3. **改 API** 时同步检查 `doc/PRD/22-API-与-WebSocket-契约.md`，若行为变化要更新。
+4. **改前端组件**时同步检查 `doc/PRD/` 里对应模块的 PRD（PRD-10~16）。
+5. **完成任务后**：必须更新 `CHANGELOG.md` 和相关模块的 PRD / 开发手册（日志 / 监控相关改动需同步更新 `07-日志监控开发指南.md`）。
 6. **遇到错误**：先用浮动 LogViewer 看实时错误（`Ctrl+Shift+L` 打开），再用 `GET /api/logs?keyword=...` 查历史。
 7. **不要碰 `.venv/`、`node_modules/`、`__pycache__/`、`*.pyc`**。
 
@@ -105,4 +108,4 @@ else: print('无错误日志 ✓')
 
 ### 详细协议
 
-详见 `doc/记忆文件/Ai执行必读.md`（AI 执行总纲文档）。
+详见 `AGENTS.md`（项目根目录，AI 执行总纲文档）。

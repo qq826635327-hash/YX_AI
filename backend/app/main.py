@@ -86,6 +86,10 @@ async def lifespan(app: FastAPI):
     clear_settings_cache()
     reset_engine()
 
+    # 重置任务状态（清理旧 event loop 上的 Semaphore 引用）
+    from app.api.generate import reset_task_state
+    reset_task_state()
+
     # 把主事件循环注入 WS LogHandler（用于从其他线程广播）
     import asyncio
     try:
@@ -101,24 +105,47 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"WS manager 兜底设置失败: {e}")
 
+    # 安全校验（必须在 init_db 之前，避免用错误密钥处理数据）
+    settings = get_settings()
+    validate_security(settings)
+
     # 启动时初始化数据库
     init_db()
-    settings = get_settings()
 
-    # 安全校验
-    validate_security(settings)
+    # 迁移 config.yaml 中的图床配置到数据库（仅首次运行时执行）
+    from app.services.image_hosting_migrate import migrate_image_hosting_from_config
+    migrate_image_hosting_from_config()
+
+    # 启动维护：备份数据库 + 执行数据保留策略 + WAL checkpoint
+    # 每步独立容错，单个失败不影响其他步骤和服务启动
+    from app.services.backup_service import run_startup_maintenance
+    run_startup_maintenance()
 
     # 恢复被中断的任务（uvicorn 重启 / 崩溃导致 running 状态卡住的任务）
     from app.services.generation_service import recover_orphan_tasks
     recover_orphan_tasks()
 
+    # 启动任务日志缓冲 flush 协程
+    from app.services.task_log_service import start_flush_loop
+    await start_flush_loop()
+
+    # 启动事件循环 watchdog（检测同步阻塞调用）
+    from app.services.perf_watchdog import start_watchdog
+    start_watchdog()
+
     logger.info(f"数据库已初始化: {settings.database.url}")
     logger.info(f"项目根目录: {settings.projects_root_abs}")
     logger.info(f"ComfyUI: {'已启用' if settings.comfyui.enabled else '未启用'}")
-    logger.info(f"LLM 解析: {'已启用' if settings.llm.enabled else '未启用'}")
     if settings.security.is_default_key:
         logger.warning("⚠️ 使用默认开发密钥，请勿用于生产环境！")
     yield
+    # ---- 优雅关闭 ----
+    from app.services.perf_watchdog import stop_watchdog
+    stop_watchdog()
+    from app.services.task_log_service import stop_flush_loop
+    await stop_flush_loop()
+    from app.api.generate import drain_tasks
+    await drain_tasks(timeout=120.0)
     logger.info("服务已关闭")
 
 
@@ -223,6 +250,52 @@ def create_app() -> FastAPI:
     # Cache-Control：防止浏览器缓存 API 响应（必须放在最外层）
     app.add_middleware(CacheControlMiddleware)
 
+    # 慢请求监控中间件：>200ms 的请求记录并经 WS 实时推送告警
+    SLOW_REQUEST_THRESHOLD_MS = 200
+
+    @app.middleware("http")
+    async def slow_request_monitor(request: Request, call_next):
+        import time as _time
+
+        path = request.url.path
+        # 排除性能上报自身与健康检查，避免递归和噪声
+        if path.startswith("/api/perf/") or path == "/api/health":
+            return await call_next(request)
+
+        start = _time.perf_counter()
+        response = await call_next(request)
+        duration_ms = (_time.perf_counter() - start) * 1000
+
+        if duration_ms > SLOW_REQUEST_THRESHOLD_MS:
+            method = request.method
+            status = response.status_code
+            rounded = round(duration_ms)
+            logger.warning(
+                "慢请求 %s %s → %s 耗时 %.0fms（阈值 %dms）",
+                method, path, status, duration_ms, SLOW_REQUEST_THRESHOLD_MS,
+            )
+            # 实时推送告警到前端 perf 频道（推送失败不影响响应）
+            try:
+                from app.ws.routes import manager, make_message
+                await manager.broadcast(
+                    "perf",
+                    make_message(
+                        "perf.alert",
+                        {
+                            "session_id": "backend",
+                            "level": "warning" if duration_ms < 1000 else "error",
+                            "metric": "slow.request",
+                            "threshold": SLOW_REQUEST_THRESHOLD_MS,
+                            "actual": rounded,
+                            "message": f"慢请求 {method} {path} → {status}，耗时 {rounded}ms",
+                        },
+                    ),
+                )
+            except Exception:
+                logger.debug("慢请求告警推送失败", exc_info=True)
+
+        return response
+
     # Basic Auth 鉴权（按配置启用）
     if settings.security.basic_auth_enabled:
         logger.info("Basic Auth 鉴权已启用")
@@ -257,7 +330,6 @@ def create_app() -> FastAPI:
             "version": settings.app.version,
             "database": db_status,
             "comfyui_enabled": settings.comfyui.enabled,
-            "llm_enabled": settings.llm.enabled,
         }
 
     # 托管前端构建产物（生产模式）

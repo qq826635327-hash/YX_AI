@@ -25,3 +25,6 @@ class Project(IDMixin, TimestampMixin, table=True):
     prop_count: int = Field(default=0)
     episode_count: int = Field(default=0)
     shot_count: int = Field(default=0)
+
+    # 画风预置
+    style_preset: Optional[str] = Field(default=None, max_length=100, description="画风预置：如 anime/3d/ink/default")

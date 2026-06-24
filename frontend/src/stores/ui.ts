@@ -4,6 +4,16 @@ import { create } from "zustand";
 
 type ActiveModule = "project" | "tasks" | "config";
 
+export type SelectedEntity =
+  | { type: "character"; id: string; projectId: string }
+  | { type: "scene"; id: string; projectId: string }
+  | { type: "prop"; id: string; projectId: string }
+  | { type: "episode"; id: string; projectId: string }
+  | { type: "shot"; id: string; projectId: string }
+  | { type: "asset"; id: string; projectId: string; entityType: string; entityId: string; imageAssetId?: string }
+  | { type: "shot_frame"; id: string; projectId: string; shotId: string; frameType: "first_frame" | "last_frame" | "video" }
+  | null;
+
 interface UiState {
   /** 当前激活的模块（控制左侧菜单显示内容） */
   activeModule: ActiveModule;
@@ -16,6 +26,10 @@ interface UiState {
   /** 主题：light / dark / system */
   theme: "light" | "dark" | "system";
   setTheme: (theme: "light" | "dark" | "system") => void;
+
+  /** 当前选中的实体（用于右侧属性面板） */
+  selectedEntity: SelectedEntity;
+  setSelectedEntity: (entity: SelectedEntity) => void;
 
   /** Toast 通知 */
   toasts: Toast[];
@@ -44,6 +58,9 @@ export const useUiStore = create<UiState>((set) => ({
     set({ theme });
     applyTheme(theme);
   },
+
+  selectedEntity: null,
+  setSelectedEntity: (entity) => set({ selectedEntity: entity }),
 
   toasts: [],
   pushToast: (toast) =>

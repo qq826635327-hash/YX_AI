@@ -85,12 +85,41 @@ function copyToClipboard(text: string): void {
   }
 }
 
-export function LogViewer() {
+/** 浮动按钮：只订阅 unread，不订阅 entries 数组。
+ * 后端每推一条 WS 日志只更新 unread 计数，不触发按钮重渲染。 */
+function LogViewerFloatingButton() {
+  const viewerOpen = useLogStore((s) => s.viewerOpen);
+  const toggleViewer = useLogStore((s) => s.toggleViewer);
+  const unread = useLogStore((s) => s.unread);
+
+  if (viewerOpen) return null;
+
+  return (
+    <button
+      onClick={toggleViewer}
+      className={cn(
+        "fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition-[background-color,transform]",
+        "bg-background border hover:bg-accent active:scale-95",
+        unread > 0 && "ring-2 ring-red-500/50"
+      )}
+      title={`日志查看器（${unread} 条未读）`}
+    >
+      <span className="text-lg">📋</span>
+      {unread > 0 && (
+        <span className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** 日志列表浮窗：展开时才渲染，才订阅 entries 数组。 */
+function LogViewerPanel() {
   const viewerOpen = useLogStore((s) => s.viewerOpen);
   const toggleViewer = useLogStore((s) => s.toggleViewer);
   const closeViewer = useLogStore((s) => s.closeViewer);
   const clear = useLogStore((s) => s.clear);
-  const unread = useLogStore((s) => s.unread);
   const levelFilter = useLogStore((s) => s.levelFilter);
   const setLevelFilter = useLogStore((s) => s.setLevelFilter);
   const keyword = useLogStore((s) => s.keyword);
@@ -196,131 +225,118 @@ export function LogViewer() {
     return () => window.removeEventListener("keydown", handler);
   }, [toggleViewer]);
 
+  if (!viewerOpen) return null;
+
+  return (
+    <div
+      className={cn(
+        "fixed bottom-4 right-4 z-50 flex flex-col rounded-lg border bg-background shadow-2xl",
+        "h-[70vh] w-[640px] max-w-[calc(100vw-2rem)]"
+      )}
+    >
+      {/* 头部 */}
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">日志查看器</span>
+          <Badge variant="secondary" className="text-[10px]">
+            {entries.length} 条
+          </Badge>
+          {loadingHistory && <span className="text-xs text-muted-foreground">加载中…</span>}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="ghost" onClick={copyAsText} title="复制为文本">
+            📝
+          </Button>
+          <Button size="sm" variant="ghost" onClick={copyAll} title="复制为 JSON">
+            {"{}"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleClear}
+            disabled={clearing}
+            title="清空日志（后端 + 前端）"
+            className="text-destructive"
+          >
+            {clearing ? "清空中…" : "清空"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={closeViewer} title="关闭">
+            ✕
+          </Button>
+        </div>
+      </div>
+
+      {/* 过滤栏 */}
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <input
+          type="text"
+          placeholder="搜索日志…"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          className="flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+        <div className="flex items-center gap-1">
+          {(["ERROR", "WARNING", "INFO", "DEBUG"] as LogLevel[]).map((lv) => (
+            <button
+              key={lv}
+              onClick={() => setLevelFilter(levelFilter === lv ? null : lv)}
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                LEVEL_STYLES[lv].text,
+                levelFilter === lv ? LEVEL_STYLES[lv].bg : "hover:bg-accent"
+              )}
+            >
+              {LEVEL_STYLES[lv].label}
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={autoScroll}
+            onChange={(e) => setAutoScroll(e.target.checked)}
+            className="h-3 w-3"
+          />
+          自动滚动
+        </label>
+      </div>
+
+      {/* 列表 */}
+      <div
+        ref={listRef}
+        className="flex-1 overflow-y-auto px-2 py-1 font-mono text-xs"
+        onScroll={(e) => {
+          // 用户向上滚动时，暂停自动滚动
+          const el = e.currentTarget;
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
+          if (!atBottom) setAutoScroll(false);
+        }}
+      >
+        {entries.length === 0 && !loadingHistory && (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            暂无日志。试试看触发一个后端 API 错误看看吧～
+          </div>
+        )}
+        {entries.map((e) => (
+          <LogRow key={e.id} entry={e} />
+        ))}
+      </div>
+
+      {/* 底部状态栏 */}
+      <div className="flex items-center justify-between border-t px-3 py-1.5 text-[10px] text-muted-foreground">
+        <span>实时接收后端 ERROR/WARNING · 快捷键 Ctrl+Shift+L</span>
+        <span>来源: 实时 WS + /api/logs 历史</span>
+      </div>
+    </div>
+  );
+}
+
+/** 日志查看器入口：浮动按钮（常驻，只订阅 unread）+ 浮窗（展开时才渲染，订阅 entries）。 */
+export function LogViewer() {
   return (
     <>
-      {/* 浮动按钮 */}
-      {!viewerOpen && (
-        <button
-          onClick={toggleViewer}
-          className={cn(
-            "fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition-all",
-            "bg-background border hover:bg-accent active:scale-95",
-            unread > 0 && "ring-2 ring-red-500/50"
-          )}
-          title={`日志查看器（${unread} 条未读）`}
-        >
-          <span className="text-lg">📋</span>
-          {unread > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-              {unread > 99 ? "99+" : unread}
-            </span>
-          )}
-        </button>
-      )}
-
-      {/* 浮窗 */}
-      {viewerOpen && (
-        <div
-          className={cn(
-            "fixed bottom-4 right-4 z-50 flex flex-col rounded-lg border bg-background shadow-2xl",
-            "h-[70vh] w-[640px] max-w-[calc(100vw-2rem)]"
-          )}
-        >
-          {/* 头部 */}
-          <div className="flex items-center justify-between border-b px-3 py-2">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold">日志查看器</span>
-              <Badge variant="secondary" className="text-[10px]">
-                {entries.length} 条
-              </Badge>
-              {loadingHistory && <span className="text-xs text-muted-foreground">加载中…</span>}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button size="sm" variant="ghost" onClick={copyAsText} title="复制为文本">
-                📝
-              </Button>
-              <Button size="sm" variant="ghost" onClick={copyAll} title="复制为 JSON">
-                {"{}"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleClear}
-                disabled={clearing}
-                title="清空日志（后端 + 前端）"
-                className="text-destructive"
-              >
-                {clearing ? "清空中…" : "清空"}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={closeViewer} title="关闭">
-                ✕
-              </Button>
-            </div>
-          </div>
-
-          {/* 过滤栏 */}
-          <div className="flex items-center gap-2 border-b px-3 py-2">
-            <input
-              type="text"
-              placeholder="搜索日志…"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-            <div className="flex items-center gap-1">
-              {(["ERROR", "WARNING", "INFO", "DEBUG"] as LogLevel[]).map((lv) => (
-                <button
-                  key={lv}
-                  onClick={() => setLevelFilter(levelFilter === lv ? null : lv)}
-                  className={cn(
-                    "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
-                    LEVEL_STYLES[lv].text,
-                    levelFilter === lv ? LEVEL_STYLES[lv].bg : "hover:bg-accent"
-                  )}
-                >
-                  {LEVEL_STYLES[lv].label}
-                </button>
-              ))}
-            </div>
-            <label className="flex items-center gap-1 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={autoScroll}
-                onChange={(e) => setAutoScroll(e.target.checked)}
-                className="h-3 w-3"
-              />
-              自动滚动
-            </label>
-          </div>
-
-          {/* 列表 */}
-          <div
-            ref={listRef}
-            className="flex-1 overflow-y-auto px-2 py-1 font-mono text-xs"
-            onScroll={(e) => {
-              // 用户向上滚动时，暂停自动滚动
-              const el = e.currentTarget;
-              const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
-              if (!atBottom) setAutoScroll(false);
-            }}
-          >
-            {entries.length === 0 && !loadingHistory && (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                暂无日志。试试看触发一个后端 API 错误看看吧～
-              </div>
-            )}
-            {entries.map((e) => (
-              <LogRow key={e.id} entry={e} />
-            ))}
-          </div>
-
-          {/* 底部状态栏 */}
-          <div className="flex items-center justify-between border-t px-3 py-1.5 text-[10px] text-muted-foreground">
-            <span>实时接收后端 ERROR/WARNING · 快捷键 Ctrl+Shift+L</span>
-            <span>来源: 实时 WS + /api/logs 历史</span>
-          </div>
-        </div>
-      )}
+      <LogViewerFloatingButton />
+      <LogViewerPanel />
     </>
   );
 }

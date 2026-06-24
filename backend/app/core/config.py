@@ -63,26 +63,40 @@ class SecurityConfig(BaseModel):
 
 
 class TasksConfig(BaseModel):
-    backend: str = "sqlite"
-    huey_path: str = "./data/db/huey.sqlite"
-    max_retry: int = 3
-    timeout: int = 600
     save_prompts: bool = True  # 是否保存生成提示词到 txt 文件
-
-
-class LLMConfig(BaseModel):
-    enabled: bool = False
-    provider: str = "openai"
-    base_url: str = "https://api.openai.com/v1"
-    api_key: str = ""
-    model: str = "gpt-4o-mini"
-    timeout: int = 120
+    rate_limit_retry: int = 5  # 速率限制自动重试次数（0=不重试）
+    rate_limit_wait: int = 65  # 速率限制重试等待时间（秒）
+    smart_fallback: bool = True  # 智能降级：主引擎失败时自动切换备选 Provider
+    max_concurrent: int = 4  # 任务中心最大并发数
+    auto_retry_on_download_fail: bool = True  # API已成功但下载失败时自动重试
+    auto_retry_max_attempts: int = 3  # 自动重试最大次数
+    task_max_age_minutes: int = 30  # 任务最大存活时间（分钟），超时不再自动重试
 
 
 class ImageHostingConfig(BaseModel):
     """图床配置（用于将本地图片上传到公网，供需要公网 URL 的 API 使用）。"""
-    provider: str = ""  # "smms" | ""（空=不启用）
+    provider: str = ""  # "smms" | "superbed" | "boltp" | ""（空=不启用）
     smms_token: str = ""  # SM.MS API Secret Token
+    superbed_token: str = ""  # 聚合图床(superbed.cc) Token
+    boltp_token: str = ""  # 闪电图床(boltp.com) Token
+
+
+class BackupConfig(BaseModel):
+    """SQLite 自动备份配置。"""
+    enabled: bool = True
+    dir: str = "../data/backups"
+    retention_days: int = 7
+
+
+class RetentionConfig(BaseModel):
+    """数据保留策略配置。
+
+    按时间清理过期数据，防止数据库无限膨胀：
+    - task_logs_days: 超过此天数的日志无条件清理
+    - tasks_days: 超过此天数且已结束（succeeded/failed/cancelled）的任务清理
+    """
+    task_logs_days: int = 30
+    tasks_days: int = 90
 
 
 class ReferencePromptConfig(BaseModel):
@@ -104,6 +118,13 @@ class ReferencePromptConfig(BaseModel):
     position: str = "prefix"
 
 
+class DefaultModelsConfig(BaseModel):
+    """默认模型配置：全局生效，生图/生视频/文本推理时自动选择。"""
+    default_image_model: str = ""   # 默认图片生成模型名
+    default_text_model: str = ""    # 默认文本推理模型名
+    default_video_model: str = ""   # 默认视频生成模型名
+
+
 class Settings(BaseModel):
     """全局配置对象。"""
 
@@ -113,9 +134,11 @@ class Settings(BaseModel):
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     tasks: TasksConfig = Field(default_factory=TasksConfig)
-    llm: LLMConfig = Field(default_factory=LLMConfig)
     image_hosting: ImageHostingConfig = Field(default_factory=ImageHostingConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
     reference_prompt: ReferencePromptConfig = Field(default_factory=ReferencePromptConfig)
+    default_models: DefaultModelsConfig = Field(default_factory=DefaultModelsConfig)
 
     # 运行时计算的字段
     backend_root: Path = Path(__file__).resolve().parent.parent.parent  # backend/
@@ -148,13 +171,6 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     if comfyui_enabled := os.getenv("ADS_COMFYUI_ENABLED"):
         settings.comfyui.enabled = comfyui_enabled.lower() in ("1", "true", "yes")
 
-    # LLM
-    if llm_key := os.getenv("ADS_LLM_API_KEY"):
-        settings.llm.api_key = llm_key
-        settings.llm.enabled = True
-    if llm_base := os.getenv("ADS_LLM_BASE_URL"):
-        settings.llm.base_url = llm_base
-
     # 安全密钥
     if enc_key := os.getenv("ADS_ENCRYPTION_KEY"):
         settings.security.encryption_key = enc_key
@@ -164,6 +180,16 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         settings.image_hosting.smms_token = smms_token
         if not settings.image_hosting.provider:
             settings.image_hosting.provider = "smms"
+
+    if superbed_token := os.getenv("ADS_SUPERBED_TOKEN"):
+        settings.image_hosting.superbed_token = superbed_token
+        if not settings.image_hosting.provider:
+            settings.image_hosting.provider = "superbed"
+
+    if boltp_token := os.getenv("ADS_BOLTP_TOKEN"):
+        settings.image_hosting.boltp_token = boltp_token
+        if not settings.image_hosting.provider:
+            settings.image_hosting.provider = "boltp"
 
     # 端口
     if port := os.getenv("ADS_PORT"):
@@ -201,6 +227,34 @@ def clear_settings_cache() -> None:
     _get_fernet.cache_clear()
 
 
+def save_settings_to_yaml(settings: Settings) -> None:
+    """将当前 Settings 持久化写入 config.yaml（运行时修改配置后调用）。"""
+    config_path = settings.backend_root / "config.yaml"
+
+    # 读取现有 YAML 保留注释和格式
+    existing = _load_yaml_config(config_path)
+
+    # 合并变更（只更新有变化的字段，保留其他字段）
+    existing.setdefault("default_models", {})
+    existing["default_models"]["default_image_model"] = settings.default_models.default_image_model
+    existing["default_models"]["default_text_model"] = settings.default_models.default_text_model
+    existing["default_models"]["default_video_model"] = settings.default_models.default_video_model
+
+    existing.setdefault("tasks", {})
+    existing["tasks"]["rate_limit_retry"] = settings.tasks.rate_limit_retry
+    existing["tasks"]["rate_limit_wait"] = settings.tasks.rate_limit_wait
+    existing["tasks"]["smart_fallback"] = settings.tasks.smart_fallback
+    existing["tasks"]["max_concurrent"] = settings.tasks.max_concurrent
+    existing["tasks"]["auto_retry_on_download_fail"] = settings.tasks.auto_retry_on_download_fail
+    existing["tasks"]["auto_retry_max_attempts"] = settings.tasks.auto_retry_max_attempts
+    existing["tasks"]["task_max_age_minutes"] = settings.tasks.task_max_age_minutes
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(existing, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    logger.info("配置已持久化到 %s", config_path)
+
+
 # ============================================================
 # 密钥加密工具
 # ============================================================
@@ -219,16 +273,21 @@ def encrypt_secret(plain: str) -> str:
     return _get_fernet().encrypt(plain.encode("utf-8")).decode("utf-8")
 
 
+class DecryptionError(Exception):
+    """API Key 解密失败异常。"""
+    pass
+
+
 def decrypt_secret(cipher: str) -> str:
     """解密敏感数据。"""
     if not cipher:
         return ""
     try:
         return _get_fernet().decrypt(cipher.encode("utf-8")).decode("utf-8")
-    except Exception:
-        # 解密失败：不再回退到原始密文，避免泄露密文内容
-        logger.warning("解密失败，返回空字符串。如果这是旧数据，请重新配置 API Key。")
-        return ""
+    except Exception as e:
+        # 解密失败时抛出特定异常，由调用方决定降级策略
+        logger.error(f"解密失败: {e}。可能是密钥更换导致旧数据无法解密，请重新配置 API Key。")
+        raise DecryptionError(f"解密失败，可能是密钥更换导致。请重新配置 API Key。原始错误: {e}") from e
 
 
 def mask_secret(secret: str) -> str:

@@ -20,6 +20,16 @@ class ScriptParseRequest(BaseModel):
     force: bool = Field(default=False)
     # 可选指定 LLM Provider（不传则用默认）
     llm_provider_id: Optional[str] = None
+    # 重新解析时是否保留已有提示词（settings 字段）
+    preserve_prompts: bool = Field(
+        default=False,
+        description="为 True 时，已有实体的提示词（settings）不会被新解析结果覆盖",
+    )
+    # 解析目标：控制哪些实体需要提取
+    parse_targets: list[str] = Field(
+        default=["characters", "scenes", "props", "episodes"],
+        description="解析目标列表，可选值: characters, scenes, props, episodes",
+    )
 
 
 class ParsedCharacter(BaseModel):
@@ -76,5 +86,7 @@ class ScriptView(BaseModel):
     parse_error: Optional[str] = None
     parsed_at: Optional[str] = None
     parsed_result: Optional[dict[str, Any]] = None
+    current_stage: Optional[str] = None
+    completed_stages: Optional[list[dict[str, Any]]] = None
     created_at: str
     updated_at: str

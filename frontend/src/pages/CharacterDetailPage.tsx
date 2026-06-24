@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Pencil, RefreshCw, Upload, Trash2, ImageIcon } from "lucide-react";
+import { RefreshCw, Upload, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { PageContainer, LoadingState, EmptyState } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -18,16 +17,26 @@ import {
 import { AssetGallery } from "@/components/AssetGallery";
 import { useCharacter, useUpdateCharacter, useDeleteCharacter } from "@/hooks/useBusiness";
 import { useAssetDetail } from "@/hooks/useAssetDetail";
-import { charTypeMap } from "@/lib/utils";
+import { useConfirm } from "@/components/ConfirmDialog";
+import { useUiStore } from "@/stores/ui";
 import type { Character } from "@/types";
 
 export function CharacterDetailPage() {
   const { projectId, characterId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const setSelectedEntity = useUiStore((s) => s.setSelectedEntity);
+  const confirm = useConfirm();
 
   const [editing, setEditing] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+
+  // 加载到详情页时同步设置右侧属性面板
+  useEffect(() => {
+    if (projectId && characterId) {
+      setSelectedEntity({ type: "character", id: characterId, projectId });
+    }
+  }, [projectId, characterId, setSelectedEntity]);
 
   const { data: character, isLoading: charLoading, isError: charError, refetch: refetchChar } =
     useCharacter(projectId!, characterId!);
@@ -38,7 +47,7 @@ export function CharacterDetailPage() {
   const handleSetPrimary = useCallback(
     (assetId: string) => {
       updateMutation.mutate(
-        { id: characterId!, payload: { image_asset_id: assetId } },
+        { id: characterId!, payload: { image_asset_id: assetId || null } },
         {
           onSuccess: () => {
             refetchChar();
@@ -74,8 +83,8 @@ export function CharacterDetailPage() {
     onRefetchEntity: refetchChar,
   });
 
-  const handleDelete = () => {
-    if (!confirm(`确认删除角色「${character?.name}」？`)) return;
+  const handleDelete = async () => {
+    if (!(await confirm({ title: `确认删除角色「${character?.name}」？`, variant: "destructive" }))) return;
     deleteMutation.mutate(characterId!, {
       onSuccess: () => navigate(`/projects/${projectId}/characters`),
     });
@@ -87,16 +96,12 @@ export function CharacterDetailPage() {
   return (
     <>
       <PageContainer
-        title=""
+        title={character.name}
         description=""
         showBack
         backTo={`/projects/${projectId}/characters`}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-              <Pencil className="mr-1 h-3.5 w-3.5" />
-              编辑
-            </Button>
             <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               <Upload className="mr-1 h-3.5 w-3.5" />
               {uploading ? "上传中..." : "上传图片"}
@@ -105,50 +110,13 @@ export function CharacterDetailPage() {
               <RefreshCw className="mr-1 h-3.5 w-3.5" />
               生成图片
             </Button>
-          </div>
-        }
-      >
-        {/* 角色信息 */}
-        <div className="mb-8 grid gap-6 lg:grid-cols-3">
-          <Card className="overflow-hidden">
-            <div className="flex aspect-square items-center justify-center bg-muted">
-              {character.image_asset_id ? (
-                <img
-                  src={`/api/assets/${character.image_asset_id}/file`}
-                  alt={character.name}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <ImageIcon className="h-16 w-16 text-muted-foreground/40" />
-              )}
-            </div>
-          </Card>
-
-          <div className="space-y-4 lg:col-span-2">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">{character.name}</h1>
-              <Badge variant="secondary">{charTypeMap[character.char_type]}</Badge>
-            </div>
-            {character.description && (
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">描述</p>
-                <p className="whitespace-pre-wrap text-sm">{character.description}</p>
-              </div>
-            )}
-            {character.settings && (
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">生成设定</p>
-                <p className="whitespace-pre-wrap text-sm text-muted-foreground">{character.settings}</p>
-              </div>
-            )}
-            <Button variant="outline" size="sm" onClick={handleDelete}
-              className="text-destructive hover:bg-destructive/10">
+            <Button variant="destructive" size="sm" onClick={handleDelete}>
               <Trash2 className="mr-1 h-3.5 w-3.5" />
               删除角色
             </Button>
           </div>
-        </div>
-
+        }
+      >
         {/* 图片画廊（通用组件） */}
         <AssetGallery
           imageAssets={imageAssets}

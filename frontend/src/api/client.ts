@@ -9,6 +9,7 @@
 import ky from "ky";
 import type { ApiErrorResponse, ApiResponse, PaginatedData } from "@/types";
 import { logger as log } from "@/stores/logStore";
+import { perf } from "@/perf";
 
 /** 统一错误类。 */
 export class ApiError extends Error {
@@ -32,8 +33,32 @@ export const http = ky.create({
     limit: 2,
   },
   hooks: {
+    beforeRequest: [
+      (request) => {
+        // 在请求头记录开始时间，用于 afterResponse 计算耗时
+        (request as Request & { __perfStart?: number }).__perfStart = performance.now();
+      },
+    ],
     afterResponse: [
       async (_request, _options, response) => {
+        // API 性能埋点
+        try {
+          const start = (_request as Request & { __perfStart?: number }).__perfStart;
+          if (start) {
+            const duration = performance.now() - start;
+            const url = new URL(response.url);
+            const segments = url.pathname.replace(/^\/api\//, "").split("/");
+            const metricName = segments.slice(0, 2).join(".");
+            perf.measure(`api.${metricName || "request"}`, duration, {
+              path: url.pathname,
+              method: _request.method,
+              status: response.status,
+            });
+          }
+        } catch {
+          /* 埋点失败不应影响请求 */
+        }
+
         if (!response.ok) {
           let body: ApiErrorResponse | undefined;
           try {

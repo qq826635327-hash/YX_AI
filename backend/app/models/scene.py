@@ -16,6 +16,7 @@ class Scene(IDMixin, TimestampMixin, table=True):
     name: str = Field(index=True, max_length=200)
     description: Optional[str] = Field(default=None)
     settings: Optional[str] = Field(default=None)
+    camera_hint: Optional[str] = Field(default=None, max_length=200, description="镜头建议：远景/全景/中景/室内/室外/时间等")
     image_asset_id: Optional[str] = Field(
         default=None, foreign_key="assets.id", max_length=36, ondelete="SET NULL"
     )

@@ -15,6 +15,7 @@ env/
 data/db/*.sqlite
 data/db/*.sqlite-journal
 data/projects/
+data/backups/
 
 # 前端
 node_modules/

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.core.serialization import serialize_model, serialize_models
@@ -11,6 +12,10 @@ from app.models import Prop
 from app.schemas.business import PropCreate, PropUpdate
 from app.schemas.common import ok
 from app.services import business_service
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
 
 router = APIRouter(prefix="/projects/{project_id}/props", tags=["props"])
 
@@ -29,6 +34,28 @@ async def api_create_prop(
 ):
     prop = business_service.create_entity(session, Prop, project_id, payload.model_dump())
     return ok(serialize_model(prop), message="道具已创建")
+
+
+@router.post("/batch-delete")
+async def api_batch_delete_props(
+    project_id: str,
+    payload: BatchDeleteRequest,
+    session: Session = Depends(get_session),
+):
+    """批量删除道具。"""
+    deleted = 0
+    errors = []
+    for pid in payload.ids:
+        prop = business_service.get_one(session, Prop, pid)
+        if prop and prop.project_id == project_id:
+            success = business_service.delete_entity(session, Prop, pid)
+            if success:
+                deleted += 1
+            else:
+                errors.append({"id": pid, "error": "删除失败"})
+        else:
+            errors.append({"id": pid, "error": "道具不存在"})
+    return ok({"deleted": deleted, "errors": errors}, message=f"已删除 {deleted} 个道具")
 
 
 @router.get("/{prop_id}")

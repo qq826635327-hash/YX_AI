@@ -17,6 +17,7 @@ TARGET_TYPES = (
     "shot_first_frame",
     "shot_last_frame",
     "shot_video",
+    "script_parse",
 )
 # Provider 类型
 PROVIDER_TYPES = ("comfyui", "api")
@@ -60,6 +61,12 @@ class GenerationTask(IDMixin, TimestampMixin, table=True):
     # 开始/结束时间（timezone-aware datetime）
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
+
+    # 缓存键（用于 Prompt 缓存：相同 model+prompt+params 命中缓存跳过 API 调用）
+    cache_key: Optional[str] = Field(default=None, max_length=64, index=True)
+
+    # 自动重试（API已成功但下载失败时，自动重试下载而不重新调API）
+    auto_retry_count: int = Field(default=0, description="自动重试已执行次数")
 
     __table_args__ = (
         Index("ix_generation_tasks_project_status", "project_id", "status"),

@@ -3,10 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { scriptApi } from "@/api/script";
 import { generateApi, tasksApi, providerCapabilitiesApi } from "@/api/generate";
-import { providersApi, workflowsApi, systemApi, llmConfigApi } from "@/api/config";
+import { providersApi, workflowsApi, systemApi, imageHostingApi } from "@/api/config";
+import { promptTemplatesApi } from "@/api/promptTemplates";
+import { stylePresetsApi, type StylePresetCreate, type StylePresetUpdate } from "@/api/stylePresets";
 import { toast } from "@/stores/ui";
 import { assetsApi } from "@/api/assets";
-import type { BatchGenerateRequest, GenerateRequest } from "@/types";
+import type { BatchGenerateRequest, GenerateRequest, PromptTemplateCreate, PromptTemplateType, PromptTemplateUpdate, ImageHostingCreate } from "@/types";
 
 // ============================================================
 // 剧本
@@ -35,7 +37,8 @@ export function useSaveScript(projectId: string) {
 export function useParseScript(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (force: boolean) => scriptApi.parse(projectId, force),
+    mutationFn: ({ force, preservePrompts, parseTargets }: { force: boolean; preservePrompts?: boolean; parseTargets?: string[] }) =>
+      scriptApi.parse(projectId, force, preservePrompts, parseTargets),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["script", projectId] });
       toast.info("剧本解析已启动，请稍候");
@@ -111,9 +114,23 @@ export function useBatchGenerate() {
 }
 
 export function useDeleteAsset() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (assetId: string) => assetsApi.delete(assetId, true),
+    // 乐观更新：从所有 assets 缓存中移除已删 asset，减少 refetch
+    onMutate: async (assetId) => {
+      // 取消进行中的 assets 查询，避免覆盖乐观更新
+      await qc.cancelQueries({ queryKey: ["assets"] });
+      // 遍历所有 assets 开头的缓存，移除已删 asset
+      qc.getQueriesData<import("@/types").Asset[]>({ queryKey: ["assets"] }).forEach(([key, data]) => {
+        if (data) {
+          qc.setQueryData(key, data.filter((a) => a.id !== assetId));
+        }
+      });
+    },
     onError: (e: Error) => toast.error(e.message),
+    // 失败时刷新恢复正确数据
+    onSettled: () => qc.invalidateQueries({ queryKey: ["assets"] }),
   });
 }
 
@@ -147,13 +164,13 @@ export function useTasks(params?: {
       params?.page_size,
     ],
     queryFn: () => tasksApi.list(params),
-    // 智能轮询：有活跃任务时 5s，否则 30s（WS 推送会即时 invalidate）
+    // 智能轮询：有活跃任务时 15s，否则 30s（WS 推送会即时更新缓存，轮询只是兜底）
     refetchInterval: (query) => {
       const items = query.state.data?.items || [];
       const hasActive = items.some(
         (t: any) => t.status === "pending" || t.status === "running" || t.status === "queued"
       );
-      return hasActive ? 5000 : 30000;
+      return hasActive ? 15000 : 30000;
     },
   });
 }
@@ -171,12 +188,13 @@ export function usePendingTasks(projectId: string, targetType: string, targetId:
         page_size: 20,
       }),
     refetchInterval: (query) => {
-      // 如果有 pending/running 任务，2 秒轮询；否则停止轮询
+      // 如果有 pending/running 任务，10 秒轮询；否则停止轮询
+      // WS 推送会即时更新缓存，轮询只是兜底
       const items = query.state.data?.items || [];
       const hasActive = items.some(
         (t: any) => t.status === "pending" || t.status === "running" || t.status === "queued"
       );
-      return hasActive ? 2000 : false; // 无进行中任务时停止轮询
+      return hasActive ? 10000 : false;
     },
     enabled: !!projectId && !!targetId,
   });
@@ -299,14 +317,173 @@ export function useSystemConfig() {
   });
 }
 
-export function useUpdateLLMConfig() {
+// ============================================================
+// 提示词模板
+// ============================================================
+
+export function usePromptTemplates(templateType?: PromptTemplateType) {
+  return useQuery({
+    queryKey: ["prompt-templates", templateType],
+    queryFn: () => promptTemplatesApi.list(templateType),
+  });
+}
+
+export function useCreatePromptTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: Record<string, unknown>) => llmConfigApi.update(payload),
+    mutationFn: (payload: PromptTemplateCreate) => promptTemplatesApi.create(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["system-config"] });
-      toast.success("LLM 配置已更新");
+      qc.invalidateQueries({ queryKey: ["prompt-templates"] });
+      toast.success("模板已创建");
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useUpdatePromptTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & PromptTemplateUpdate) =>
+      promptTemplatesApi.update(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["prompt-templates"] });
+      toast.success("模板已更新");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDeletePromptTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => promptTemplatesApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["prompt-templates"] });
+      toast.success("模板已删除");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+// ============================================================
+// 画风预置
+// ============================================================
+
+export function useStylePresets() {
+  return useQuery({
+    queryKey: ["style-presets"],
+    queryFn: () => stylePresetsApi.list(),
+  });
+}
+
+export function useCreateStylePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: StylePresetCreate) => stylePresetsApi.create(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["style-presets"] });
+      toast.success("画风预置已创建");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useUpdateStylePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & StylePresetUpdate) =>
+      stylePresetsApi.update(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["style-presets"] });
+      toast.success("画风预置已更新");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDeleteStylePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => stylePresetsApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["style-presets"] });
+      toast.success("画风预置已删除");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useReorderStylePresets() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderedIds: string[]) => stylePresetsApi.reorder(orderedIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["style-presets"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+// ============================================================
+// 图床配置
+// ============================================================
+
+export function useImageHostingProviders() {
+  return useQuery({
+    queryKey: ["image-hosting"],
+    queryFn: () => imageHostingApi.list(),
+  });
+}
+
+export function useCreateImageHosting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ImageHostingCreate) => imageHostingApi.create(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["image-hosting"] });
+      toast.success("图床已创建");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useUpdateImageHosting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & Partial<ImageHostingCreate>) =>
+      imageHostingApi.update(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["image-hosting"] });
+      toast.success("图床已更新");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDeleteImageHosting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => imageHostingApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["image-hosting"] });
+      toast.success("图床已删除");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useTestImageHosting() {
+  return useMutation({
+    mutationFn: (id: string) => imageHostingApi.test(id),
+  });
+}
+
+export function useSetDefaultImageHosting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => imageHostingApi.setDefault(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["image-hosting"] });
+    },
   });
 }

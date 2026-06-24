@@ -14,7 +14,6 @@ from app.models import Asset, Episode, Shot
 from app.schemas.business import EpisodeCreate, EpisodeUpdate
 from app.schemas.common import ok
 from app.services import business_service
-from app.services.asset_service import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -77,67 +76,28 @@ def _rename_shots_dirs(
     new_episode_no: int,
     auto_commit: bool = True,
 ) -> None:
-    """剧集 episode_no 变更时，重命名其下所有分镜目录并更新 Asset file_path。
+    """剧集 episode_no 变更时，更新其下所有分镜关联 Asset 的 file_path。
+
+    新目录结构下分镜嵌套在 剧集/第X集/ 下，剧集目录重命名时分镜目录自动跟随移动，
+    无需单独重命名分镜目录，只需更新 Asset file_path 中的前缀即可。
 
     事务策略：
-    1. 先收集所有需要重命名的目录与对应的 Asset 记录
-    2. 执行文件系统重命名，记录已成功重命名的目录
-    3. 更新 DB 中 Asset 的 file_path
-    4. 若中途失败，尝试回滚已重命名的目录
+    1. 查找该集下所有分镜关联的 Asset
+    2. 将 file_path 中的 剧集/第{old_no}集/ 替换为 剧集/第{new_no}集/
+    3. 若 auto_commit=True 则自动 commit
 
     Args:
         auto_commit: 是否自动 commit Asset 路径更新。False 时由调用方统一 commit。
     """
-    project_root = get_project_root(project_id, session)
-    if not project_root:
-        return
+    old_prefix = f"剧集/第{old_episode_no}集/"
+    new_prefix = f"剧集/第{new_episode_no}集/"
 
     shots = list(session.exec(
         select(Shot).where(Shot.episode_id == episode_id)
     ).all())
 
-    # 收集待重命名项：[(old_dir, new_dir, shot, old_prefix, new_prefix), ...]
-    rename_plan: list[tuple] = []
+    updated = 0
     for shot in shots:
-        old_dirname = f"第{old_episode_no}集_{shot.shot_no}"
-        new_dirname = f"第{new_episode_no}集_{shot.shot_no}"
-        old_dir = project_root / "分镜" / old_dirname
-        new_dir = project_root / "分镜" / new_dirname
-        if not old_dir.exists():
-            continue
-        if new_dir.exists():
-            logger.warning(f"[rename] 目标目录已存在，跳过: {new_dir}")
-            continue
-        old_prefix = f"分镜/{old_dirname}/"
-        new_prefix = f"分镜/{new_dirname}/"
-        rename_plan.append((old_dir, new_dir, shot, old_prefix, new_prefix))
-
-    if not rename_plan:
-        return
-
-    # 执行重命名，记录已成功的项以便回滚
-    done: list[tuple] = []
-    try:
-        for old_dir, new_dir, shot, old_prefix, new_prefix in rename_plan:
-            old_dir.rename(new_dir)
-            logger.info(f"[rename] 分镜目录已重命名: {old_dir} → {new_dir}")
-            done.append((old_dir, new_dir, shot, old_prefix, new_prefix))
-    except OSError as e:
-        # 回滚已重命名的目录
-        logger.error(f"[rename] 重命名失败，开始回滚: {e}")
-        for old_dir, new_dir, shot, old_prefix, new_prefix in reversed(done):
-            try:
-                new_dir.rename(old_dir)
-                logger.info(f"[rename] 回滚: {new_dir} → {old_dir}")
-            except OSError as rb_err:
-                logger.error(f"[rename] 回滚失败: {rb_err}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "rename_failed", "message": f"分镜目录重命名失败: {e}"},
-        )
-
-    # 所有重命名成功，暂存 Asset file_path 更新
-    for old_dir, new_dir, shot, old_prefix, new_prefix in done:
         assets = list(session.exec(
             select(Asset).where(
                 Asset.project_id == project_id,
@@ -150,6 +110,11 @@ def _rename_shots_dirs(
             if normalized.startswith(old_prefix):
                 asset.file_path = new_prefix + normalized[len(old_prefix):]
                 session.add(asset)
+                updated += 1
+                logger.debug(f"[rename] Shot Asset path 更新: {normalized} → {asset.file_path}")
+
+    if updated > 0:
+        logger.info(f"[rename] 已暂存 {updated} 个分镜 Asset 的 file_path 更新")
 
     if auto_commit:
         session.commit()

@@ -1,49 +1,49 @@
 @echo off
-chcp 65001 >nul
+chcp 65001 >nul 2>&1
+setlocal EnableDelayedExpansion
 
 REM ============================================================
-REM  AI Drama Studio - 一键停止脚本
-REM  位置：项目根目录 D:\影序AI\stop.bat
-REM  用法：双击运行，或命令行执行 stop.bat
+REM  AI Drama Studio - Stop
+REM  Double-click to stop all services
 REM ============================================================
 
 echo.
-echo  正在停止 AI Drama Studio 服务...
+echo  Stopping AI Drama Studio...
 echo.
 
 set "FOUND=0"
 
-REM 停止后端（uvicorn 进程）
-for /f "tokens=2" %%a in ('tasklist /fi "WINDOWTITLE eq ADS-Backend*" /fo list 2^>nul ^| findstr "PID:"') do (
-    taskkill /PID %%a /T /F >nul 2>&1
+REM 1. Kill by process name
+for /f "tokens=2 delims=," %%a in ('tasklist /fo csv /nh 2^>nul ^| findstr /I "uvicorn node vite"') do (
+    taskkill /T /F /PID %%~a >nul 2>&1
     set "FOUND=1"
-    echo   [ok] 后端已停止
 )
 
-REM 停止前端（vite 进程）
-for /f "tokens=2" %%a in ('tasklist /fi "WINDOWTITLE eq ADS-Frontend*" /fo list 2^>nul ^| findstr "PID:"') do (
-    taskkill /PID %%a /T /F >nul 2>&1
-    set "FOUND=1"
-    echo   [ok] 前端已停止
-)
+REM 2. Kill by port (8000 / 5173)
+call :kill_port 8000
+call :kill_port 5173
 
-REM 备用方案：按端口查找并停止
-for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":8000 " ^| findstr "LISTENING"') do (
-    taskkill /PID %%p /F >nul 2>&1
-    set "FOUND=1"
-    echo   [ok] 端口 8000 进程已停止
+if "!FOUND!"=="0" (
+    echo   [i] No running services found
+) else (
+    echo   [ok] Services stopped
 )
-
-for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":5173 " ^| findstr "LISTENING"') do (
-    taskkill /PID %%p /F >nul 2>&1
-    set "FOUND=1"
-    echo   [ok] 端口 5173 进程已停止
-)
-
-if "%FOUND%"=="0" (
-    echo   [i] 未发现运行中的服务
-)
-
 echo.
-echo  所有服务已停止。
-echo.
+pause
+exit /b 0
+
+:kill_port
+set "KP_PORT=%~1"
+set "KP_TRIES=0"
+:kp_loop
+netstat -ano | findstr ":%KP_PORT% " | findstr "LISTENING" >nul 2>&1
+if !ERRORLEVEL! neq 0 goto :eof
+set /A KP_TRIES+=1
+if !KP_TRIES! gtr 3 goto :eof
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%KP_PORT% " ^| findstr "LISTENING"') do (
+    taskkill /T /F /PID %%p >nul 2>&1
+    set "FOUND=1"
+    echo   [ok] Port %KP_PORT% PID %%p killed
+)
+powershell -NoProfile -Command "Start-Sleep -Milliseconds 500" >nul 2>&1
+goto :kp_loop

@@ -120,6 +120,7 @@ SenseNova 6.7 Flash-Lite 支持通过 `image_url` 类型的 content 块传入图
 model ID: `sensenova-u1-fast`
 
 ⚠️ U1 Fast 使用独立的图像生成接口，**不是** Chat Completions 接口。不支持图像输入。
+3K及以上图，速率有限制1分钟1次。
 
 ### 请求地址
 

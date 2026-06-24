@@ -33,6 +33,7 @@ export interface Project {
   cover_image?: string;
   status: "active" | "archived";
   root_path?: string;
+  style_preset?: string;
   character_count: number;
   scene_count: number;
   prop_count: number;
@@ -54,6 +55,7 @@ export interface ProjectUpdate {
   description?: string;
   cover_image?: string;
   status?: "active" | "archived";
+  style_preset?: string;
 }
 
 // ============================================================
@@ -82,6 +84,8 @@ export interface ParsedResult {
 
 export interface ParsedCharacter {
   name: string;
+  gender?: string;
+  age?: string;
   char_type: "protagonist" | "supporting" | "extra";
   description?: string;
   settings?: string;
@@ -121,45 +125,31 @@ export interface ParsedShot {
 export type CharType = "protagonist" | "supporting" | "extra";
 export type GenStatus = "none" | "pending" | "generating" | "ready" | "failed";
 
-export interface Character {
+/** 角色/场景/道具的公共字段 */
+export interface BaseEntity {
   id: string;
   project_id: string;
   name: string;
+  description?: string;
+  settings?: string;
+  image_asset_id?: string | null;
+  gen_status: GenStatus;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Character extends BaseEntity {
+  gender?: string;
+  age?: string;
   char_type: CharType;
-  description?: string;
-  settings?: string;
-  image_asset_id?: string;
-  gen_status: GenStatus;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
 }
 
-export interface Scene {
-  id: string;
-  project_id: string;
-  name: string;
-  description?: string;
-  settings?: string;
-  image_asset_id?: string;
-  gen_status: GenStatus;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
+export interface Scene extends BaseEntity {
+  camera_hint?: string;
 }
 
-export interface Prop {
-  id: string;
-  project_id: string;
-  name: string;
-  description?: string;
-  settings?: string;
-  image_asset_id?: string;
-  gen_status: GenStatus;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
+export interface Prop extends BaseEntity {}
 
 // ============================================================
 // 剧集 / 分镜
@@ -191,6 +181,9 @@ export interface Shot {
   video_prompt?: string;
   video_asset_id?: string;
   video_status: GenStatus;
+  camera_size?: string;
+  camera_angle?: string;
+  camera_movement?: string;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -231,7 +224,8 @@ export type TargetType =
   | "prop"
   | "shot_first_frame"
   | "shot_last_frame"
-  | "shot_video";
+  | "shot_video"
+  | "script_parse";
 
 export interface GenerationTask {
   id: string;
@@ -245,6 +239,7 @@ export interface GenerationTask {
   output_payload?: Record<string, unknown>;
   status: TaskStatus;
   progress: number;
+  progress_message?: string;
   retry_count: number;
   error_message?: string;
   output_asset_id?: string;
@@ -266,8 +261,8 @@ export interface GenerateRequest {
   size?: string;
   count?: number;
   reference_asset_ids?: string[];
-  reference_preset?: "full" | "first_frame_only" | "first_and_last_frame" | "none";
   extra_params?: Record<string, unknown>;
+  force?: boolean;
 }
 
 // ============================================================
@@ -301,9 +296,21 @@ export interface ProviderCapabilities {
   provider_kind: string;
   model: string | null;
   param_specs: ParamSpec[];
+  // 能力声明
+  image_generation: boolean;
+  image_to_image: boolean;
+  video_generation: boolean;
   batch_support: boolean;
   max_count: number;
+  max_reference_images: number;
+  supports_negative_prompt: boolean;
+  custom_size_range: [number, number];
+  reference_images_need_url: boolean;
+  // 兼容旧字段
   reference_image: boolean;
+  // 视频参考图配置
+  video_reference_types?: string[];
+  video_reference_hint?: string;
   extra_fields: ExtraField[];
 }
 
@@ -327,8 +334,8 @@ export interface BatchGenerateRequest {
   size?: string;
   count?: number;
   reference_asset_ids?: string[];
-  reference_preset?: "full" | "first_frame_only" | "first_and_last_frame" | "none";
   extra_params?: Record<string, unknown>;
+  force?: boolean;
 }
 
 // ============================================================
@@ -347,6 +354,66 @@ export interface ShotReferences {
   scenes: ShotReferenceEntity[];
   props: ShotReferenceEntity[];
   reference_image_ids: string[];
+}
+
+// ============================================================
+// 提示词模板
+// ============================================================
+
+export type PromptTemplateType = "character" | "scene" | "prop" | "episode" | "shot";
+
+export const PROMPT_TEMPLATE_TYPE_LABELS: Record<PromptTemplateType, string> = {
+  character: "角色提取",
+  scene: "场景提取",
+  prop: "道具提取",
+  episode: "章节划分",
+  shot: "分镜拆分",
+};
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  template_type: PromptTemplateType;
+  description?: string;
+  content: string;
+  is_default: boolean;
+  is_builtin: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================================
+// 画风预置
+// ============================================================
+
+export interface StylePreset {
+  id: string;
+  title: string;
+  description: string;
+  is_default: boolean;
+  is_builtin: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptTemplateCreate {
+  name: string;
+  template_type: PromptTemplateType;
+  description?: string;
+  content: string;
+  is_default?: boolean;
+  sort_order?: number;
+}
+
+export interface PromptTemplateUpdate {
+  name?: string;
+  template_type?: PromptTemplateType;
+  description?: string;
+  content?: string;
+  is_default?: boolean;
+  sort_order?: number;
 }
 
 // ============================================================
@@ -370,6 +437,8 @@ export interface ProviderModel {
   model_name: string;
   tags: ModelTag[];
   sort_order: number;
+  param_specs?: ParamSpec[] | null;
+  capabilities?: ModelCapabilitiesConfig | null;
 }
 
 export interface ProviderModelInput {
@@ -377,6 +446,23 @@ export interface ProviderModelInput {
   model_name: string;
   tags: ModelTag[];
   sort_order: number;
+  param_specs?: ParamSpec[] | null;
+  capabilities?: ModelCapabilitiesConfig | null;
+}
+
+/** 模型能力声明（数据驱动，对应后端 ModelCapabilities.to_dict()） */
+export interface ModelCapabilitiesConfig {
+  image_generation?: boolean;
+  image_to_image?: boolean;
+  video_generation?: boolean;
+  batch_support?: boolean;
+  max_count?: number;
+  max_reference_images?: number;
+  supports_negative_prompt?: boolean;
+  custom_size_range?: [number, number];
+  reference_images_need_url?: boolean;
+  video_reference_types?: string[];
+  video_reference_hint?: string;
 }
 
 export interface ApiProvider {
@@ -410,6 +496,38 @@ export interface ProviderCreate {
   description?: string;
 }
 
+// ── 图床配置 ──
+
+export type HostingProviderType = "smms" | "superbed" | "boltp" | "github" | "custom";
+
+export interface ImageHostingProvider {
+  id: string;
+  name: string;
+  provider_type: HostingProviderType;
+  api_url: string;
+  token_masked: string;
+  has_token: boolean;
+  extra_config: Record<string, unknown> | null;
+  max_file_size: number;
+  is_default: boolean;
+  enabled: boolean;
+  description: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ImageHostingCreate {
+  name: string;
+  provider_type: HostingProviderType;
+  api_url?: string;
+  token?: string;
+  extra_config?: Record<string, unknown> | null;
+  max_file_size?: number;
+  is_default?: boolean;
+  enabled?: boolean;
+  description?: string | null;
+}
+
 // ============================================================
 // 工作流映射
 // ============================================================
@@ -437,8 +555,14 @@ export interface WorkflowMapping {
 export interface SystemConfig {
   app: { name: string; version: string };
   comfyui: { base_url: string; enabled: boolean; timeout: number };
-  llm: { enabled: boolean; provider: string; model: string; base_url: string };
   storage: { projects_root: string };
+  default_models: { default_image_model: string; default_text_model: string; default_video_model: string };
+  tasks: {
+    rate_limit_retry: number;
+    rate_limit_wait: number;
+    smart_fallback: boolean;
+    max_concurrent: number;
+  };
 }
 
 // ============================================================
@@ -449,6 +573,40 @@ export interface WsMessage<T = unknown> {
   type: string;
   data: T;
   timestamp: string;
+}
+
+/** 剧本解析步骤状态 */
+export type ParseStepStatus = "pending" | "active" | "done";
+
+/** 剧本解析步骤定义 */
+export interface ParseStep {
+  stage: string;
+  label: string;
+  status: ParseStepStatus;
+  summary?: string;
+}
+
+/** script.parsing 消息的 data */
+export interface ScriptParsingData {
+  project_id: string;
+  stage: string;
+  message?: string;
+  completed_stages?: { stage: string; summary: string }[];
+}
+
+/** script.stream 消息的 data */
+export interface ScriptStreamData {
+  project_id: string;
+  stage: string;
+  tokens: string;
+}
+
+/** script.stage_done 消息的 data */
+export interface ScriptStageDoneData {
+  project_id: string;
+  stage: string;
+  summary: string;
+  completed_stages?: { stage: string; summary: string }[];
 }
 
 // ============================================================

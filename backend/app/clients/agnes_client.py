@@ -156,37 +156,6 @@ class AgnesClient:
         resp.raise_for_status()
         return resp.json()
 
-    def wait_video_completion(
-        self,
-        task_id: str,
-        poll_interval: int = 10,
-        max_wait: int = 600,
-    ) -> str:
-        """轮询视频任务直到完成，返回视频 URL。
-
-        Raises:
-            TimeoutError: 超过 max_wait 秒仍未完成
-            ValueError: 任务失败
-        """
-        start = time.time()
-        while time.time() - start < max_wait:
-            data = self.get_video_task(task_id)
-            status = data.get("status", "unknown")
-            logger.info(f"[Agnes] 视频任务 {task_id} 状态: {status}")
-
-            if status == "completed":
-                video_url = data.get("remixed_from_video_id") or data.get("video_url")
-                if not video_url:
-                    raise ValueError(f"任务完成但未返回视频 URL: {data}")
-                return video_url
-            elif status == "failed":
-                error = data.get("error", "未知错误")
-                raise ValueError(f"视频生成失败: {error}")
-
-            time.sleep(poll_interval)
-
-        raise TimeoutError(f"视频任务 {task_id} 超时（{max_wait}s）")
-
     # ============================================================
     # 文本生成（同步，OpenAI 兼容）
     # ============================================================
@@ -259,9 +228,38 @@ async def async_wait_video_completion(
     return await _poll()
 
 
-async def async_download_file(url: str, output_path: Path, timeout: int = 120) -> None:
-    """异步包装：在非阻塞线程中运行同步文件下载。"""
-    return await asyncio.to_thread(download_file, url, output_path, timeout)
+async def async_download_file(
+    url: str,
+    output_path: Path,
+    timeout: int = 120,
+    max_retries: int = 3,
+) -> None:
+    """真正的异步文件下载（不阻塞事件循环和线程池）。"""
+    import os
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    last_exc: Exception | None = None
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    with open(tmp_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes():
+                            f.write(chunk)
+                os.replace(str(tmp_path), str(output_path))
+                logger.info(f"[Agnes] 文件已下载: {output_path}")
+                return
+            except (OSError, httpx.HTTPError) as e:
+                last_exc = e
+                logger.warning(f"[Agnes] 下载失败（第 {attempt}/{max_retries} 次）: {e}")
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if attempt < max_retries:
+                    await asyncio.sleep(2 * attempt)
+    raise last_exc  # type: ignore[misc]
 
 
 def download_file(url: str, output_path: Path, timeout: int = 120, max_retries: int = 3) -> None:

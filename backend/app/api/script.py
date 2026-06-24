@@ -12,6 +12,7 @@ from app.services.script_service import (
     get_script,
     mark_parsing,
     update_script,
+    restore_from_snapshot,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/script", tags=["script"])
@@ -28,6 +29,8 @@ def _to_view(doc) -> dict:
         parse_error=doc.parse_error,
         parsed_at=doc.parsed_at,
         parsed_result=doc.parsed_result,
+        current_stage=doc.current_stage,
+        completed_stages=doc.completed_stages,
         created_at=doc.created_at.isoformat() if doc.created_at else None,
         updated_at=doc.updated_at.isoformat() if doc.updated_at else None,
     ).model_dump()
@@ -74,9 +77,34 @@ async def api_parse_script(
 
     mark_parsing(session, doc.id)
 
-    # 后台启动解析任务（Phase 2 实现 LLM 调用，Phase 1 用占位）
+    # 后台启动解析任务
     from app.pipelines.script_parser import parse_script_async
 
-    background_tasks.add_task(parse_script_async, doc.id, project_id)
+    background_tasks.add_task(
+        parse_script_async, doc.id, project_id,
+        preserve_prompts=payload.preserve_prompts,
+        parse_targets=payload.parse_targets,
+    )
 
     return ok({"script_id": doc.id, "status": "parsing"}, message="解析已启动")
+
+
+@router.post("/cancel-parse")
+async def api_cancel_parse(
+    project_id: str,
+    session: Session = Depends(get_session),
+):
+    """取消正在进行的剧本解析，恢复数据到解析前状态。"""
+    doc = get_script(session, project_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "剧本不存在"})
+
+    if doc.parse_status != "parsing":
+        return err("当前没有正在进行的解析", error="not_parsing")
+
+    # 标记为 cancelled，后台 orchestrator 会在阶段间检测到并恢复数据
+    doc.parse_status = "cancelled"
+    session.add(doc)
+    session.commit()
+
+    return ok(None, message="已发送取消信号，数据将恢复到解析前状态")

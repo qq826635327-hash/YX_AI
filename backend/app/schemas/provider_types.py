@@ -62,6 +62,15 @@ class ModelCapabilities(BaseModel):
     supports_negative_prompt: bool = Field(default=False, description="是否支持反向提示词")
     custom_size_range: tuple[int, int] = Field(default=(256, 2048), description="自定义尺寸范围 (min, max)")
     reference_images_need_url: bool = Field(default=False, description="参考图是否需要公网 URL（False=支持 base64）")
+    # 视频参考图配置（仅 video_generation 模型使用）
+    video_reference_types: list[str] = Field(
+        default_factory=lambda: ["first_frame", "last_frame", "character", "scene", "prop"],
+        description="视频生成默认参考图类型，可选：first_frame/last_frame/character/scene/prop",
+    )
+    video_reference_hint: str = Field(
+        default="",
+        description="视频生成弹窗中显示的参考图模式提示文案",
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """转为前端兼容的 dict（兼容旧 capabilities 格式）。"""
@@ -76,4 +85,6 @@ class ModelCapabilities(BaseModel):
             "supports_negative_prompt": self.supports_negative_prompt,
             "custom_size_range": list(self.custom_size_range),
             "reference_images_need_url": self.reference_images_need_url,
+            "video_reference_types": self.video_reference_types,
+            "video_reference_hint": self.video_reference_hint,
         }

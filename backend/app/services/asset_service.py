@@ -516,103 +516,118 @@ def sync_assets(session: Session, project_id: str) -> dict:
                         errors += 1
                         logger.warning(f"[sync] 创建素材记录失败 {file_path}: {e}")
 
-    # 扫描分镜目录
-    episode_path = project_root / "分镜"
-    if episode_path.is_dir():
-        for shot_dir in episode_path.iterdir():
-            if not shot_dir.is_dir():
+    # 扫描分镜目录（新结构：剧集/第X集/分镜NNN/首帧|尾帧|视频/）
+    episodes_path = project_root / "剧集"
+    if episodes_path.is_dir():
+        from app.models import Episode as _Episode, Shot as _Shot
+        for ep_dir in episodes_path.iterdir():
+            if not ep_dir.is_dir():
                 continue
-
-            # 解析目录名如 "第1集_S01" → 找到对应的 Shot
-            shot = _find_shot_by_dirname(session, project_id, shot_dir.name)
-            if not shot:
-                continue
-
-            for sub_dir_name in ("images", "videos"):
-                sub_dir = shot_dir / sub_dir_name
-                if not sub_dir.is_dir():
+            for shot_dir in ep_dir.iterdir():
+                if not shot_dir.is_dir():
+                    continue
+                # 解析目录名 "分镜NNN" → 提取 shot_no，反查 Shot
+                dir_name = shot_dir.name
+                shot_no = None
+                if dir_name.startswith("分镜"):
+                    try:
+                        shot_no = int(dir_name[2:])
+                    except ValueError:
+                        pass
+                if shot_no is None:
+                    continue
+                # 通过 project_id + shot_no 查找 Shot
+                shot = session.exec(
+                    select(_Shot).where(
+                        _Shot.project_id == project_id,  # type: ignore[attr-defined]
+                        _Shot.shot_no == shot_no,
+                    )
+                ).first()
+                if not shot:
                     continue
 
-                for file_path in sub_dir.iterdir():
-                    if not file_path.is_file():
-                        continue
-                    ext = file_path.suffix.lower()
-                    if sub_dir_name == "images" and ext not in image_exts:
-                        continue
-                    if sub_dir_name == "videos" and ext not in video_exts:
+                # 遍历首帧/尾帧/视频子目录
+                for sub_dir_name in ("首帧", "尾帧", "视频"):
+                    sub_dir = shot_dir / sub_dir_name
+                    if not sub_dir.is_dir():
                         continue
 
-                    try:
-                        rel_path = str(file_path.relative_to(project_root.resolve())).replace("\\", "/")
-                    except ValueError:
-                        continue
-
-                    if rel_path in existing_paths:
-                        continue
-
-                    # 根据文件名推断 target_type
-                    fname_lower = file_path.stem.lower()
-                    # 默认 asset_type 为 image，避免变量泄漏
-                    asset_type = "image"
-                    if "last" in fname_lower or "末帧" in fname_lower:
+                    # 根据子目录名确定 target_type 和 asset_type
+                    if sub_dir_name == "首帧":
+                        shot_target_type = "shot_first_frame"
+                        category = "first_frame"
+                        asset_type = "image"
+                        file_exts = image_exts
+                    elif sub_dir_name == "尾帧":
                         shot_target_type = "shot_last_frame"
                         category = "last_frame"
-                    elif "video" in fname_lower or "视频" in fname_lower or sub_dir_name == "videos":
+                        asset_type = "image"
+                        file_exts = image_exts
+                    else:  # 视频
                         shot_target_type = "shot_video"
                         category = "shot_video"
                         asset_type = "video"
-                    else:
-                        shot_target_type = "shot_first_frame"
-                        category = "first_frame"
+                        file_exts = video_exts
 
-                    if sub_dir_name == "images":
-                        asset_type = "image"
+                    for file_path in sub_dir.iterdir():
+                        if not file_path.is_file():
+                            continue
+                        if file_path.suffix.lower() not in file_exts:
+                            continue
 
-                    try:
-                        file_size = file_path.stat().st_size
-                        mime_type = mimetypes.guess_type(file_path.name)[0]
+                        try:
+                            rel_path = str(file_path.relative_to(project_root.resolve())).replace("\\", "/")
+                        except ValueError:
+                            continue
 
-                        new_asset = create_asset_record(
-                            session=session,
-                            project_id=project_id,
-                            asset_type=asset_type,
-                            category=category,
-                            file_path=rel_path,
-                            file_size=file_size,
-                            mime_type=mime_type,
-                            status="ready",
-                            target_type=shot_target_type,
-                            target_id=shot.id,
-                        )
+                        if rel_path in existing_paths:
+                            continue
 
-                        # 回填到分镜
-                        if shot_target_type == "shot_first_frame" and not shot.first_frame_asset_id:
-                            shot.first_frame_asset_id = new_asset.id
-                            session.add(shot)
-                            session.commit()
-                        elif shot_target_type == "shot_last_frame" and not shot.last_frame_asset_id:
-                            shot.last_frame_asset_id = new_asset.id
-                            session.add(shot)
-                            session.commit()
-                        elif shot_target_type == "shot_video" and not shot.video_asset_id:
-                            shot.video_asset_id = new_asset.id
-                            session.add(shot)
-                            session.commit()
+                        try:
+                            file_size = file_path.stat().st_size
+                            mime_type = mimetypes.guess_type(file_path.name)[0]
 
-                        existing_paths.add(rel_path)
-                        discovered += 1
-                        details.append({
-                            "action": "discovered",
-                            "asset_id": new_asset.id,
-                            "file_path": rel_path,
-                            "file_name": file_path.name,
-                            "target_type": shot_target_type,
-                            "target_id": shot.id,
-                        })
-                        logger.info(f"[sync] 发现新分镜素材: {rel_path} → {shot_target_type}/{shot.id}")
-                    except Exception as e:
-                        errors += 1
-                        logger.warning(f"[sync] 创建分镜素材记录失败 {file_path}: {e}")
+                            new_asset = create_asset_record(
+                                session=session,
+                                project_id=project_id,
+                                asset_type=asset_type,
+                                category=category,
+                                file_path=rel_path,
+                                file_size=file_size,
+                                mime_type=mime_type,
+                                status="ready",
+                                target_type=shot_target_type,
+                                target_id=shot.id,
+                            )
+
+                            # 回填到分镜
+                            if shot_target_type == "shot_first_frame" and not shot.first_frame_asset_id:
+                                shot.first_frame_asset_id = new_asset.id
+                                session.add(shot)
+                                session.commit()
+                            elif shot_target_type == "shot_last_frame" and not shot.last_frame_asset_id:
+                                shot.last_frame_asset_id = new_asset.id
+                                session.add(shot)
+                                session.commit()
+                            elif shot_target_type == "shot_video" and not shot.video_asset_id:
+                                shot.video_asset_id = new_asset.id
+                                session.add(shot)
+                                session.commit()
+
+                            existing_paths.add(rel_path)
+                            discovered += 1
+                            details.append({
+                                "action": "discovered",
+                                "asset_id": new_asset.id,
+                                "file_path": rel_path,
+                                "file_name": file_path.name,
+                                "target_type": shot_target_type,
+                                "target_id": shot.id,
+                            })
+                            logger.info(f"[sync] 发现新分镜素材: {rel_path} → {shot_target_type}/{shot.id}")
+                        except Exception as e:
+                            errors += 1
+                            logger.warning(f"[sync] 创建分镜素材记录失败 {file_path}: {e}")
 
     logger.info(f"[sync] 项目 {project_id} 同步完成: checked={checked}, cleaned={cleaned}, discovered={discovered}, errors={errors}")
     return {
@@ -642,16 +657,20 @@ def _find_entity_by_dirname(session: Session, Model, project_id: str, dirname: s
 
 
 def _find_shot_by_dirname(session: Session, project_id: str, dirname: str):
-    """根据目录名如 '第1集_S01' 查找 Shot。"""
+    """根据目录名查找 Shot。
+
+    支持两种格式：
+    - 新格式：'第1集_a1b2c3d4'（shot_id 前8位，拖拽排序后稳定）
+    - 旧格式：'第1集_S01'（shot_no，向后兼容）
+    """
     from app.models import Shot, Episode
 
-    # 尝试解析 "第N集_Sxx" 或 "第N集_Mxx" 格式
     m = re.match(r"第(\d+)集[_\s](.+)", dirname)
     if not m:
         return None
 
     ep_no = int(m.group(1))
-    shot_no_str = m.group(2)
+    shot_id_part = m.group(2)
 
     # 查找剧集
     episode = session.exec(
@@ -664,9 +683,20 @@ def _find_shot_by_dirname(session: Session, project_id: str, dirname: str):
     if not episode:
         return None
 
-    # 查找分镜（shot_no 可能是 "S01" 或数字）
+    # 新格式：shot_id 前8位（十六进制字符）
+    if re.match(r"^[0-9a-f]{8}$", shot_id_part):
+        shot = session.exec(
+            select(Shot).where(
+                Shot.episode_id == episode.id,
+                Shot.id.startswith(shot_id_part),
+            )
+        ).first()
+        if shot:
+            return shot
+
+    # 旧格式：S01 / S1 / 01 / 1（shot_no）
     shot_no_num = None
-    num_match = re.search(r"\d+", shot_no_str)
+    num_match = re.search(r"\d+", shot_id_part)
     if num_match:
         shot_no_num = int(num_match.group())
 

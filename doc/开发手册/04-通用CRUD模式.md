@@ -168,7 +168,7 @@ export function useCreateEntity<T>(projectId: string, type: EntityType) {
 8. `frontend/src/pages/TagsPage.tsx`：页面（参考 CharactersPage）
 9. `frontend/src/App.tsx`：加路由
 10. `frontend/src/components/layout/Sidebar.tsx`：加菜单
-11. 同步 `doc/产品手册/A-完整路由表.md` 和 `08-通用资产卡片.md`（如适用）
+11. 同步 `doc/PRD/22-API-与-WebSocket-契约.md`（如适用）
 
 ---
 

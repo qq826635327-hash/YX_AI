@@ -147,8 +147,8 @@ def delete_project(session: Session, project_id: str, delete_files: bool = False
         # 安全校验：确保删除路径在 projects_root_abs 下
         projects_root = get_settings().projects_root_abs.resolve()
         if not root.is_relative_to(projects_root):
-            logger.warning(f"拒绝删除项目目录（超出项目根目录范围）: {root}")
-            raise ValueError("项目目录路径不合法，无法删除文件")
+            logger.warning(f"项目目录超出项目根目录范围，仅删除数据库记录，不删除文件: {root}")
+            root = None  # 不删除文件，但继续删除数据库记录
 
     # 手动删除子表记录，避免 SQLite 外键级联在循环引用（assets↔tasks）下失败
     from app.models import Asset, Character, Episode, Prop, Scene, ScriptDocument, Shot

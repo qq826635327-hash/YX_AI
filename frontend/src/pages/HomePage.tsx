@@ -1,7 +1,7 @@
 /** 首页：自动跳转到最近操作的项目，或显示新建项目弹窗。 */
 
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { FolderKanban, Plus } from "lucide-react";
 import { PageContainer, EmptyState } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -54,10 +54,18 @@ export function HomePage() {
             title="还没有项目"
             description="创建你的第一个 AI 剧集创作项目"
           />
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" />
-            新建项目
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" />
+              新建项目
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/projects">
+                <FolderKanban className="h-4 w-4" />
+                项目管理
+              </Link>
+            </Button>
+          </div>
         </div>
       ) : (
         !shouldCreate && (

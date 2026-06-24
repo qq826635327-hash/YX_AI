@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -63,6 +65,65 @@ async def api_sync_assets(
     if result["errors"]:
         msg += f"，{result['errors']} 条处理出错"
     return ok(result, message=msg)
+
+
+@router.post("/sync-dirs")
+async def api_sync_dirs_from_db(
+    project_id: str = Query(..., description="项目 ID"),
+    direction: str = Query("both", description="同步方向：db_to_disk / disk_to_db / both"),
+    session: Session = Depends(get_session),
+):
+    """双向同步：DB↔磁盘。
+
+    - db_to_disk：确保 DB 中所有实体在磁盘上都有对应目录
+    - disk_to_db：磁盘上被删除的目录，清理对应 DB 记录
+    - both：先 db_to_disk 再 disk_to_db（默认）
+    """
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "项目不存在"})
+
+    from app.services.business_service import bidirectional_sync, sync_dirs_from_db, sync_db_from_dirs
+
+    if direction == "db_to_disk":
+        result = sync_dirs_from_db(session, project_id)
+        msg = f"目录同步完成：新建 {result['created']} 个，跳过 {result['skipped']} 个"
+        if result["errors"]:
+            msg += f"，{result['errors']} 个创建失败"
+    elif direction == "disk_to_db":
+        result = sync_db_from_dirs(session, project_id)
+        msg = f"反向同步完成：检查 {result['checked']} 条，删除 {result['deleted']} 条孤立记录"
+        if result["errors"]:
+            msg += f"，{result['errors']} 条处理出错"
+    else:
+        result = bidirectional_sync(session, project_id)
+        db2disk = result["db_to_disk"]
+        disk2db = result["disk_to_db"]
+        msg = (
+            f"双向同步完成：新建目录 {db2disk['created']} 个，"
+            f"删除孤立记录 {disk2db['deleted']} 条"
+        )
+        if db2disk["errors"] or disk2db["errors"]:
+            msg += f"，共 {db2disk['errors'] + disk2db['errors']} 个错误"
+
+    return ok(result, message=msg)
+
+
+@router.post("/open-dir")
+async def api_open_dir(path: str = Query(..., description="要打开的本地目录绝对路径")):
+    """用系统文件管理器打开指定目录（仅限 Windows）。"""
+    dir_path = Path(path)
+    if not dir_path.exists():
+        raise HTTPException(status_code=404, detail=f"目录不存在: {path}")
+    if not dir_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"路径不是目录: {path}")
+    try:
+        os.startfile(str(dir_path))
+        return ok(None, message="已打开目录")
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"打开目录失败: {e}")
+        raise HTTPException(status_code=500, detail=f"打开目录失败: {e}")
 
 
 @router.post("/projects/{project_id}/upload")

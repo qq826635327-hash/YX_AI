@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import type { Asset, GenerationTask, TargetType } from "@/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { assetsApi } from "@/api/assets";
-import { toast } from "@/stores/ui";
+import { toast, useUiStore } from "@/stores/ui";
 
 interface AssetGalleryProps {
   // 数据
@@ -58,13 +58,14 @@ export function AssetGallery({
   lightboxOpen,
   lightboxIndex,
   onLightboxOpenChange,
-  onLightboxIndexChange,
+  onLightboxIndexChange: _onLightboxIndexChange,
   generateOpen,
   onGenerateOpenChange,
   defaultPrompt,
 }: AssetGalleryProps) {
   const [syncing, setSyncing] = useState(false);
   const queryClient = useQueryClient();
+  const setSelectedEntity = useUiStore((s) => s.setSelectedEntity);
   const hasImages = imageAssets.length > 0 || activeTasks.length > 0 || failedTasks.length > 0;
 
   const handleSync = async () => {
@@ -116,26 +117,36 @@ export function AssetGallery({
       </div>
 
       {!hasImages ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border/60 bg-card/50 p-8 text-center text-muted-foreground">
           <p className="mb-2">暂无生成图片</p>
-          <Button variant="outline" size="sm" onClick={() => onGenerateOpenChange(true)}>
+          <Button size="sm" onClick={() => onGenerateOpenChange(true)}>
             立即生成
           </Button>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {/* 已有图片 */}
-          {imageAssets.map((asset, idx) => (
+          {imageAssets.map((asset) => (
             <Card
               key={asset.id}
               className={cn(
-                "group relative overflow-hidden",
+                "group relative overflow-hidden border-border/60 bg-card transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/5",
                 imageAssetId === asset.id && "ring-2 ring-primary"
               )}
             >
               <div
                 className="aspect-square cursor-pointer overflow-hidden bg-muted"
-                onClick={() => { onLightboxIndexChange(idx); onLightboxOpenChange(true); }}
+                onClick={() => {
+                  // 点击图片：右侧面板展示素材属性
+                  setSelectedEntity({
+                    type: "asset",
+                    id: asset.id,
+                    projectId,
+                    entityType,
+                    entityId,
+                    imageAssetId: imageAssetId || undefined,
+                  });
+                }}
               >
                 <img
                   src={`/api/assets/${asset.id}/file`}
@@ -180,7 +191,7 @@ export function AssetGallery({
 
           {/* 进行中任务占位符 */}
           {activeTasks.map((task) => (
-            <Card key={task.id} className="relative overflow-hidden">
+            <Card key={task.id} className="relative overflow-hidden border-border/60 bg-card">
               <div className="flex aspect-square flex-col items-center justify-center gap-3 bg-muted/50">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <div className="px-2 text-center">
@@ -193,7 +204,7 @@ export function AssetGallery({
                 </div>
               </div>
               <div
-                className="absolute bottom-0 left-0 h-1 bg-primary transition-all duration-500"
+                className="absolute bottom-0 left-0 h-1 bg-primary transition-[width] duration-500"
                 style={{ width: `${task.progress || 0}%` }}
               />
             </Card>
@@ -201,7 +212,7 @@ export function AssetGallery({
 
           {/* 失败任务占位符 */}
           {failedTasks.slice(0, 3).map((task) => (
-            <Card key={task.id} className="relative overflow-hidden">
+            <Card key={task.id} className="relative overflow-hidden border-border/60 bg-card">
               <div className="flex aspect-square flex-col items-center justify-center gap-2 bg-destructive/5">
                 <AlertCircle className="h-8 w-8 text-destructive/60" />
                 <div className="px-2 text-center">

@@ -24,6 +24,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=2000)
     cover_image: Optional[str] = Field(default=None, max_length=500)
     status: Optional[str] = Field(default=None, pattern="^(active|archived)$")
+    style_preset: Optional[str] = Field(default=None, max_length=100)
 
 
 class ProjectSummary(BaseModel):
@@ -47,3 +48,4 @@ class ProjectDetail(ProjectSummary):
     """项目详情。"""
 
     root_path: str
+    style_preset: Optional[str] = None

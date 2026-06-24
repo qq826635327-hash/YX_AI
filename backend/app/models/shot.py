@@ -36,4 +36,9 @@ class Shot(IDMixin, TimestampMixin, table=True):
     )
     video_status: str = Field(default="none", max_length=20)
 
+    # 镜头参数
+    camera_size: Optional[str] = Field(default=None, max_length=30, description="景别：远景/全景/中景/近景/特写")
+    camera_angle: Optional[str] = Field(default=None, max_length=30, description="视角：平视/仰视/俯视/鸟瞰")
+    camera_movement: Optional[str] = Field(default=None, max_length=30, description="运镜：固定/推/拉/摇/移/跟/升/降")
+
     sort_order: int = Field(default=0)

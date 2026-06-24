@@ -7,6 +7,7 @@ import "./index.css";
 import { initTheme } from "@/stores/ui";
 import { tasksWs, scriptWs, logsWs } from "@/api/websocket";
 import { logger as log } from "@/stores/logStore";
+import { perf } from "@/perf";
 
 // 初始化主题
 initTheme();
@@ -16,6 +17,11 @@ function installGlobalErrorHandlers() {
   // 1. JS 运行时错误
   window.addEventListener("error", (event) => {
     try {
+      perf.mark("error.js", {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+      });
       log.error(
         event.message || "Uncaught error",
         "frontend",
@@ -35,6 +41,7 @@ function installGlobalErrorHandlers() {
   // 2. Promise 拒绝未捕获
   window.addEventListener("unhandledrejection", (event) => {
     try {
+      perf.mark("error.promise", { reason: String(event.reason) });
       const reason = event.reason;
       const message =
         reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
@@ -62,10 +69,13 @@ function installGlobalErrorHandlers() {
       const text = args
         .map((a) => (typeof a === "string" ? a : a instanceof Error ? a.stack : JSON.stringify(a)))
         .join(" ");
-      // 过滤掉一些噪音（React DevTools 提示、Warning: 已有专用处理）
+      // 过滤掉一些噪音（React DevTools 提示、HMR、IDE/Electron 内部错误、导航中断请求）
       if (
         text.includes("Download the React DevTools") ||
         text.includes("[HMR]") ||
+        text.includes("getThemeColors") ||
+        text.includes("preload script") ||
+        text.includes("net::ERR_ABORTED") ||
         text.length < 3
       ) {
         originalConsoleError(...args);
@@ -87,6 +97,21 @@ installGlobalErrorHandlers();
 tasksWs.connect();
 scriptWs.connect();
 logsWs.connect();
+// 页面关闭前主动断开 WebSocket，减少后端异常残留连接
+window.addEventListener("beforeunload", () => {
+  try {
+    tasksWs.close();
+    scriptWs.close();
+    logsWs.close();
+  } catch {
+    /* 忽略 */
+  }
+});
+
+// 启动性能监控
+perf.start();
+
+// 性能告警不再弹 Toast，只在 PerfMonitor 面板中展示
 
 const queryClient = new QueryClient({
   defaultOptions: {

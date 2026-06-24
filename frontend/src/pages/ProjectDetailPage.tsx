@@ -33,10 +33,10 @@ export function ProjectDetailPage() {
       title={project.name}
       description={project.description || "暂无描述"}
     >
-      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5 mb-8">
+      <div className="mb-8 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map((s) => (
-          <Link key={s.label} to={s.to}>
-            <Card className="transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Link key={s.label} to={s.to} className="h-full">
+            <Card className="h-full border-border/60 bg-card transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/5 hover:ring-1 hover:ring-primary/30">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -53,22 +53,24 @@ export function ProjectDetailPage() {
         ))}
       </div>
 
-      <div className="mb-2 text-sm text-muted-foreground">
+      <div className="mb-8 text-sm text-muted-foreground">
         创建于 {formatTime(project.created_at)} · 项目目录：{project.root_path}
       </div>
 
-      <h2 className="mb-4 text-lg font-semibold">快速开始</h2>
+      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">快速开始</h2>
       <div className="grid gap-4 sm:grid-cols-3">
         {shortcuts.map((s) => (
-          <Link key={s.label} to={s.to}>
-            <Card className="transition-all hover:shadow-md hover:-translate-y-0.5">
-              <CardHeader>
+          <Link key={s.label} to={s.to} className="h-full">
+            <Card className="h-full border-border/60 bg-card transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/5 hover:ring-1 hover:ring-primary/30">
+              <CardHeader className="pb-2">
                 <div className="flex items-center gap-3">
-                  <s.icon className="h-5 w-5 text-primary" />
+                  <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <s.icon className="h-4 w-4" />
+                  </div>
                   <CardTitle className="text-base">{s.label}</CardTitle>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0">
                 <p className="text-sm text-muted-foreground">{s.desc}</p>
               </CardContent>
             </Card>

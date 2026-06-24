@@ -12,7 +12,7 @@
 [后端] api/generate.py
    ↓ 1. 校验参数（handler.validate_params）
    ↓ 2. 创建 GenerationTask 记录（status=pending, progress=0）
-   ↓ 3. 调 huey_consumer 入队（当前 in-process）
+   ↓ 3. 调 _spawn_task(execute_task_async) 入队
    ↓
 [后端] tasks/execute_task.py
    ↓ status: pending → running, progress: 0 → 5
@@ -59,7 +59,7 @@ class GenerationTask(SQLModel, table=True):
 | 状态 | 含义 |
 | --- | --- |
 | `pending` | 任务刚创建，未开始 |
-| `queued` | Huey 已入队（当前实现其实跳过这步，直接 running） |
+| `queued` | 已入队（当前实现跳过此状态，直接 running） |
 | `running` | 正在执行 |
 | `succeeded` | 成功，output_asset_id 已设置 |
 | `failed` | 失败，error_message 已设置 |
@@ -151,57 +151,60 @@ useEffect(() => {
 if (data.project_id && data.project_id !== projectId) return;
 ```
 
-## 7. Huey 任务队列
+## 7. 异步任务调度
 
-### 配置
-
-`config.yaml`：
-
-```yaml
-tasks:
-  backend: sqlite
-  huey_path: ./data/db/huey.sqlite
-  max_retry: 3
-  timeout: 600
-```
-
-### 当前实现：in-process
+### 当前实现：asyncio.Semaphore + create_task
 
 ```python
-# tasks/execute_task.py
-async def execute_task_async(task_id: str) -> None:
-    """执行生成任务（后台）。"""
-    ...
+# api/generate.py
+_MAX_CONCURRENT_TASKS = 4
+_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TASKS)
+_inflight_tasks: set[asyncio.Task] = set()
 
-# 在 main.py 或专门的 consumer 里
-# huey_consumer = Huey("ai_drama_studio")
-# @huey_consumer.task()
-# def execute_task(task_id: str): ...
+def _spawn_task(coro):
+    """启动后台异步任务，保存引用防 GC。"""
+    task = asyncio.create_task(coro)
+    _inflight_tasks.add(task)
+    task.add_done_callback(_inflight_tasks.discard)
+
+# api/generate.py:api_generate
+async def api_generate(payload, session):
+    task = create_task(session, payload)
+    update_task_status(session, task.id, status="running", progress=5)
+    _spawn_task(execute_task_async(task.id))
+    _notify_task_created(task.id, task.project_id)
+    return ok({"task_id": task.id, "status": "running"})
 ```
 
-**当前实际情况**：
-- `api/generate.py` 提交任务后，用 `asyncio.create_task(execute_task_async(task_id))` 异步启动
-- 批量生成时每个任务独立 `create_task`，不阻塞 HTTP 响应
-- **生产化仍需改造**：用 Huey consumer 进程，支持持久化、重试、取消
+**关键设计**：
+- `asyncio.Semaphore(4)` 限制最大并发任务数
+- `asyncio.create_task()` 在主事件循环中启动，不阻塞 HTTP 响应
+- 任务引用保存在 `_inflight_tasks` 集合中，完成后自动移除
+- `execute_task_async` 是 `async def`，可以直接 `await` WS 推送函数
 
-### 改造步骤（Phase 2）
+### 优雅关闭
 
-1. `tasks/execute_task.py` 顶部加：
-   ```python
-   from huey import SqliteHuey
-   huey = SqliteHuey("ai_drama_studio", filename="data/db/huey.sqlite")
+```python
+# main.py lifespan
+async def drain_tasks(timeout: float = 120.0):
+    """等待在途任务完成，超时后保留 running 状态。"""
+    if not _inflight_tasks:
+        return
+    done, pending = await asyncio.wait(_inflight_tasks, timeout=timeout)
+    for t in pending:
+        t.cancel()
+```
 
-   @huey.task()
-   def execute_task(task_id: str) -> None:
-       asyncio.run(execute_task_async(task_id))
-   ```
+### 信号量重置
 
-2. 启动 Huey consumer：
-   ```bash
-   huey_consumer tasks.execute_task.huey
-   ```
-
-3. `api/generate.py` 改为 `execute_task.schedule(task_id)`，不 await。
+```python
+# main.py lifespan startup
+def reset_task_state():
+    """清除 --reload 残留的 Semaphore 计数和孤儿任务。"""
+    global _semaphore
+    _semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TASKS)
+    # 标记残留 running 任务为 failed
+```
 
 ## 7.1 前端智能轮询
 
@@ -221,13 +224,15 @@ WS 推送（`task.progress`/`task.completed`/`task.failed`）会 `invalidateQuer
 
 ## 8. 取消任务
 
-**当前未实现**。前端"取消"按钮触发的 `cancel` API 还没接 Huey。
+**当前未实现**。前端"取消"按钮触发的 `cancel` API 还没接 asyncio。
 
 TODO：
 
 ```python
-# 取消正在运行的 Huey 任务
-huey.revoke(task_id)  # 或 huey.cancel()
+# 取消正在运行的 asyncio 任务
+task = _find_inflight_task(task_id)
+if task:
+    task.cancel()
 
 # 标记状态
 update_task_status(session, task_id, status="cancelled")
@@ -245,7 +250,7 @@ push_task_cancelled(task_id)
 
 | 现象 | 排查 |
 | --- | --- |
-| 任务卡在 pending | Huey consumer 没启动；或 execute_task 抛了未捕获异常 |
+| 任务卡在 pending | 后端未正常启动；或 execute_task 抛了未捕获异常 |
 | 任务卡在 running | execute_task 内部 await 某个 IO 永久阻塞；看 `GET /api/logs?keyword=<task_id>` |
 | 任务 failed 但消息不明确 | 看 `TaskLog.data` 字段（execute_task 会把 traceback 前 500 字符写进去） |
 | WS 收不到推送 | 看 `logs/backend.log` 是否有 `WsLogHandler` 异常；前端打开 LogViewer 看是否有 WS 断开 |

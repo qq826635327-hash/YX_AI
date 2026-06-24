@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { EntityConfig } from "@/config/entityConfig";
+import type { BaseEntity } from "@/types";
 
-interface EntityEditDialogProps<T> {
+interface EntityEditDialogProps<T extends BaseEntity> {
   config: EntityConfig<T>;
   open: boolean;
   entity: T | null;
@@ -15,7 +16,7 @@ interface EntityEditDialogProps<T> {
   onSubmit: (data: Partial<T>) => void;
 }
 
-export function EntityEditDialog<T>({
+export function EntityEditDialog<T extends BaseEntity>({
   config,
   open,
   entity,

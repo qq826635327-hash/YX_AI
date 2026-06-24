@@ -6,6 +6,8 @@
 
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { X } from "lucide-react";
+import { toast } from "@/stores/ui";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useProviders, useGenerate, useBatchGenerate, useProviderCapabilities, useWorkflows } from "@/hooks/useApi";
+import { useProviders, useGenerate, useBatchGenerate, useProviderCapabilities, useWorkflows, useSystemConfig } from "@/hooks/useApi";
 import {
   MODEL_TAG_LABELS,
 } from "@/types";
@@ -49,6 +51,8 @@ export interface GenerateTarget {
   target_id: string;
   name?: string;
   prompt?: string;
+  /** 首帧素材ID，用于尾帧/视频生成时校验首帧是否存在 */
+  firstFrameAssetId?: string;
 }
 
 interface GenerateDialogProps {
@@ -66,6 +70,58 @@ interface GenerateDialogProps {
 // ============================================================
 // 组件
 // ============================================================
+
+/** 批量任务摘要展示 */
+function BatchSummary({ targets }: { targets: GenerateTarget[] }) {
+  return (
+    <div className="rounded-md border p-3">
+      <Label className="text-xs text-muted-foreground">将生成 {targets.length} 个任务：</Label>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {targets.slice(0, 10).map((t) => (
+          <Badge key={t.target_id} variant="secondary" className="text-xs">
+            {t.name || t.target_id.slice(0, 8)}
+          </Badge>
+        ))}
+        {targets.length > 10 && (
+          <Badge variant="secondary" className="text-xs">
+            +{targets.length - 10} 更多
+          </Badge>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 引擎选择按钮组 */
+function EngineSelector({
+  engineType,
+  onEngineTypeChange,
+}: {
+  engineType: "api" | "comfyui";
+  onEngineTypeChange: (v: "api" | "comfyui") => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>生成引擎</Label>
+      <div className="flex gap-2">
+        <Button
+          variant={engineType === "api" ? "default" : "outline"}
+          size="sm"
+          onClick={() => onEngineTypeChange("api")}
+        >
+          API Provider
+        </Button>
+        <Button
+          variant={engineType === "comfyui" ? "default" : "outline"}
+          size="sm"
+          onClick={() => onEngineTypeChange("comfyui")}
+        >
+          ComfyUI 本地
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export function GenerateDialog({
   open,
@@ -94,18 +150,30 @@ export function GenerateDialog({
 
   // 参考图（当 target_type 为 shot_* 时可传入参考资产 ID）
   const [referenceAssetIds, setReferenceAssetIds] = useState<string[]>([]);
-  // 参考图注入策略预设
-  const [referencePreset, setReferencePreset] = useState<
-    "full" | "first_frame_only" | "first_and_last_frame" | "none"
-  >(targets[0]?.target_type === "shot_video" ? "first_and_last_frame" : "full");
+
+  // 视频参考图类型选择（仅 shot_video）
+  const [videoRefTypes, setVideoRefTypes] = useState<string[]>([]);
+
+  // 是否是视频目标
+  const isVideoTarget = targets[0]?.target_type === "shot_video";
 
   // Hooks
   const { data: providers } = useProviders(true);
   const { data: workflows } = useWorkflows();
+  const { data: sysConfig } = useSystemConfig();
   const generateMutation = useGenerate();
   const batchMutation = useBatchGenerate();
 
-  // 平铺所有 Provider 下的模型作为选项
+  // 根据 target_type 判断需要的能力
+  const requiredCapability = useMemo(() => {
+    const targetType = targets[0]?.target_type;
+    if (targetType === "shot_video") return "video_generation";
+    if (["character", "scene", "prop", "shot_first_frame", "shot_last_frame"].includes(targetType || ""))
+      return "image_generation";
+    return null;
+  }, [targets]);
+
+  // 平铺所有 Provider 下的模型作为选项，按 target_type 过滤
   const modelOptions = useMemo(() => {
     const options: { key: string; provider: ApiProvider; model: ProviderModel }[] = [];
     for (const p of providers || []) {
@@ -115,11 +183,16 @@ export function GenerateDialog({
           ? [{ id: "", model_name: p.model, tags: [], sort_order: 0 } as ProviderModel]
           : [];
       for (const m of models) {
+        // 按能力过滤：生图只显示 image_generation 模型，生视频只显示 video_generation 模型
+        if (requiredCapability) {
+          const hasCapability = m.tags?.includes(requiredCapability as ModelTag);
+          if (!hasCapability) continue;
+        }
         options.push({ key: `${p.id}|${m.model_name}`, provider: p, model: m });
       }
     }
     return options;
-  }, [providers]);
+  }, [providers, requiredCapability]);
 
   // 能力查询
   const isComfyui = engineType === "comfyui";
@@ -129,38 +202,34 @@ export function GenerateDialog({
     isComfyui,
   );
 
-  // 打开时重置表单（仅依赖 open 和 defaultPrompt，避免 providers 加载完成时覆盖用户输入）
+  // 打开时重置表单 + 自动选择默认模型（合并为一个 effect 避免竞态条件）
   useEffect(() => {
-    if (open) {
-      setPrompt(defaultPrompt || "");
-      setEngineType("api");
-      setSelectedModelKey("");
-      setSelectedWorkflowId("");
-      setCount(1);
-      setReferenceAssetIds([]);
-      setReferencePreset(
-        targets[0]?.target_type === "shot_video" ? "first_and_last_frame" : "full"
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, defaultPrompt]);
+    if (!open) return;
 
-  // providers 加载完成时自动选择默认模型（仅在弹窗打开且未选择时）
-  useEffect(() => {
-    if (open && modelOptions.length > 0 && !selectedModelKey) {
-      const targetType = targets[0]?.target_type;
-      let preferredTag: ModelTag | null = null;
-      if (targetType === "shot_video") preferredTag = "video_generation";
-      else if (["character", "scene", "prop", "shot_first_frame", "shot_last_frame"].includes(targetType || ""))
-        preferredTag = "image_generation";
+    // 重置表单
+    setPrompt(defaultPrompt || "");
+    setEngineType("api");
+    setSelectedWorkflowId("");
+    setCount(1);
+    setReferenceAssetIds([]);
+    setVideoRefTypes([]);
 
-      // 优先按目标类型匹配标签，其次选默认 Provider 的第一个模型，最后选第一个可用模型
+    // 自动选择默认模型
+    if (modelOptions.length > 0) {
+      const defaultModelName =
+        requiredCapability === "video_generation"
+          ? sysConfig?.default_models?.default_video_model
+          : requiredCapability === "image_generation"
+            ? sysConfig?.default_models?.default_image_model
+            : requiredCapability === "text_reasoning"
+              ? sysConfig?.default_models?.default_text_model
+              : null;
+
       let def = modelOptions[0];
-      if (preferredTag) {
-        const matched = modelOptions.find((o) => o.model.tags?.includes(preferredTag));
+      if (defaultModelName) {
+        const matched = modelOptions.find((o) => o.model.model_name === defaultModelName);
         if (matched) def = matched;
-      }
-      if (def === modelOptions[0]) {
+      } else {
         const defaultProvider = providers?.find((p) => p.is_default);
         if (defaultProvider) {
           const matched = modelOptions.find((o) => o.provider.id === defaultProvider.id);
@@ -168,10 +237,39 @@ export function GenerateDialog({
         }
       }
       setSelectedModelKey(def.key);
-      setEngineType("api");
+    } else {
+      setSelectedModelKey("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, modelOptions]);
+  }, [open, defaultPrompt]);
+
+  // providers 异步加载完成时补选默认模型（弹窗已打开但尚未选中模型）
+  useEffect(() => {
+    if (!open || modelOptions.length === 0 || selectedModelKey) return;
+
+    const defaultModelName =
+      requiredCapability === "video_generation"
+        ? sysConfig?.default_models?.default_video_model
+        : requiredCapability === "image_generation"
+          ? sysConfig?.default_models?.default_image_model
+          : requiredCapability === "text_reasoning"
+            ? sysConfig?.default_models?.default_text_model
+            : null;
+
+    let def = modelOptions[0];
+    if (defaultModelName) {
+      const matched = modelOptions.find((o) => o.model.model_name === defaultModelName);
+      if (matched) def = matched;
+    } else {
+      const defaultProvider = providers?.find((p) => p.is_default);
+      if (defaultProvider) {
+        const matched = modelOptions.find((o) => o.provider.id === defaultProvider.id);
+        if (matched) def = matched;
+      }
+    }
+    setSelectedModelKey(def.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, modelOptions.length, requiredCapability, sysConfig]);
 
   // 能力变化时重置参数（根据 param_specs 初始化）
   useEffect(() => {
@@ -186,7 +284,13 @@ export function GenerateDialog({
       setParams(defaults);
       setCount(1);
     }
-  }, [capabilities]);
+    // 视频目标：初始化参考图类型为模型默认值
+    if (isVideoTarget && capabilities?.video_reference_types) {
+      setVideoRefTypes([...capabilities.video_reference_types]);
+    } else {
+      setVideoRefTypes([]);
+    }
+  }, [capabilities, isVideoTarget]);
 
   // 是否是分镜目标
   const isShotTarget = !isBatch && targets[0]?.target_type?.startsWith("shot_");
@@ -203,6 +307,28 @@ export function GenerateDialog({
         }
       }
     }
+    // 视频目标：将参考图类型选择写入 extra_params
+    if (isVideoTarget && videoRefTypes.length > 0) {
+      finalParams.reference_types = videoRefTypes.join(",");
+    }
+
+    // 尾帧/视频生成：校验首帧是否存在，过滤无首帧的分镜
+    const needsFirstFrame = (t: GenerateTarget) =>
+      t.target_type === "shot_last_frame" || t.target_type === "shot_video";
+    const hasFirstFrame = (t: GenerateTarget) => !!t.firstFrameAssetId;
+
+    if (isBatch) {
+      const needsCheck = targets.filter(needsFirstFrame);
+      if (needsCheck.length > 0) {
+        const withoutFirstFrame = needsCheck.filter((t) => !hasFirstFrame(t));
+        if (withoutFirstFrame.length > 0) {
+          toast.warning(`已跳过 ${withoutFirstFrame.length} 个无首帧的分镜，请先生成首帧`);
+        }
+      }
+    } else if (targets.length === 1 && needsFirstFrame(targets[0]) && !hasFirstFrame(targets[0])) {
+      toast.warning("请先生成首帧后再生成尾帧/视频");
+      return;
+    }
 
     const baseParams = {
       provider_type: engineType,
@@ -212,14 +338,22 @@ export function GenerateDialog({
       extra_params: finalParams,
       count,
       reference_asset_ids: referenceAssetIds.length > 0 ? referenceAssetIds : undefined,
-      reference_preset: isShotTarget ? referencePreset : undefined,
     } as Record<string, unknown>;
 
     try {
       if (isBatch) {
+        // 过滤掉无首帧的尾帧/视频目标
+        const filteredTargets = targets.filter((t) => {
+          if (needsFirstFrame(t) && !hasFirstFrame(t)) return false;
+          return true;
+        });
+        if (filteredTargets.length === 0) {
+          toast.warning("所有选中分镜均无首帧，无法生成");
+          return;
+        }
         const batchPayload = {
           project_id: projectId,
-          targets: targets.map((t) => ({
+          targets: filteredTargets.map((t) => ({
             target_type: t.target_type,
             target_id: t.target_id,
             prompt: t.prompt || prompt,
@@ -276,25 +410,7 @@ export function GenerateDialog({
 
         <div className="space-y-4 py-2">
           {/* 引擎选择 */}
-          <div className="space-y-2">
-            <Label>生成引擎</Label>
-            <div className="flex gap-2">
-              <Button
-                variant={engineType === "api" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setEngineType("api")}
-              >
-                API Provider
-              </Button>
-              <Button
-                variant={engineType === "comfyui" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setEngineType("comfyui")}
-              >
-                ComfyUI 本地
-              </Button>
-            </div>
-          </div>
+          <EngineSelector engineType={engineType} onEngineTypeChange={setEngineType} />
 
           {/* API 模型选择 */}
           {engineType === "api" && (
@@ -364,39 +480,71 @@ export function GenerateDialog({
               rows={3}
             />
             {isBatch && (
-              <p className="text-xs text-muted-foreground">
-                留空则使用各目标自身的 prompt
-              </p>
-            )}
-          </div>
+            <p className="text-xs text-muted-foreground">
+              留空则使用各目标自身的 prompt
+            </p>
+          )}
 
-          {/* 参考图注入策略（仅分镜目标） */}
-          {isShotTarget && (
-            <div className="space-y-2">
-              <Label>参考图注入策略</Label>
-              <Select
-                value={referencePreset}
-                onValueChange={(v) =>
-                  setReferencePreset(v as "full" | "first_frame_only" | "first_and_last_frame" | "none")
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="full">完整注入（首帧+尾帧+全部角色/场景/道具）</SelectItem>
-                  <SelectItem value="first_frame_only">仅首帧</SelectItem>
-                  <SelectItem value="first_and_last_frame">首帧 + 尾帧</SelectItem>
-                  <SelectItem value="none">不自动注入参考图</SelectItem>
-                </SelectContent>
-              </Select>
+        </div>
+
+        {/* 参考图提示（仅分镜目标，非视频） */}
+          {isShotTarget && !isVideoTarget && (
+            <div className="space-y-1">
               <p className="text-xs text-muted-foreground">
-                选择系统打开弹窗时自动带入哪些参考图
+                系统会自动收集关联的角色/场景/道具参考图，有则图生图，无则文生图
               </p>
+              {capabilities?.reference_images_need_url && (
+                <p className="text-xs text-amber-600">
+                  当前模型要求参考图为公网 URL，系统将自动上传到图床
+                </p>
+              )}
             </div>
           )}
 
-          {/* 参考图（分镜关联实体图自动收集） */}
+          {/* 视频参考图类型选择（仅视频目标） */}
+          {isVideoTarget && (
+            <div className="space-y-2 rounded-md border p-3">
+              <Label className="text-sm font-medium">参考图类型</Label>
+              {capabilities?.video_reference_hint && (
+                <p className="text-xs text-amber-600">{capabilities.video_reference_hint}</p>
+              )}
+              <div className="flex flex-wrap gap-3">
+                {([
+                  { value: "first_frame", label: "首帧" },
+                  { value: "last_frame", label: "尾帧" },
+                  { value: "character", label: "人物" },
+                  { value: "scene", label: "场景" },
+                  { value: "prop", label: "道具" },
+                ] as const).map((opt) => (
+                  <label key={opt.value} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <Checkbox
+                      checked={videoRefTypes.includes(opt.value)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setVideoRefTypes((prev) => [...prev, opt.value]);
+                        } else {
+                          setVideoRefTypes((prev) => prev.filter((t) => t !== opt.value));
+                        }
+                      }}
+                    />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+              {capabilities?.max_reference_images && videoRefTypes.length > capabilities.max_reference_images && (
+                <p className="text-xs text-destructive">
+                  当前模型最多支持 {capabilities.max_reference_images} 张参考图，已选 {videoRefTypes.length} 种类型
+                </p>
+              )}
+              {capabilities?.reference_images_need_url && (
+                <p className="text-xs text-muted-foreground">
+                  参考图将自动上传到图床获取公网 URL
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* 参考图（手动追加） */}
           {isShotTarget && referenceAssetIds.length > 0 && (
             <div className="space-y-2">
               <Label>手动参考图</Label>
@@ -423,29 +571,13 @@ export function GenerateDialog({
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                手动追加的参考图，会与自动注入策略合并后提交
+                手动追加的参考图，会与自动收集的参考图合并后提交
               </p>
             </div>
           )}
 
           {/* 批量摘要 */}
-          {isBatch && (
-            <div className="rounded-md border p-3">
-              <Label className="text-xs text-muted-foreground">将生成 {targets.length} 个任务：</Label>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {targets.slice(0, 10).map((t) => (
-                  <Badge key={t.target_id} variant="secondary" className="text-xs">
-                    {t.name || t.target_id.slice(0, 8)}
-                  </Badge>
-                ))}
-                {targets.length > 10 && (
-                  <Badge variant="secondary" className="text-xs">
-                    +{targets.length - 10} 更多
-                  </Badge>
-                )}
-              </div>
-            </div>
-          )}
+          {isBatch && <BatchSummary targets={targets} />}
         </div>
 
         <DialogFooter>
@@ -514,7 +646,10 @@ const DynamicParamsPanel = memo(function DynamicParamsPanel({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(spec.options || []).map((opt) => (
+                  {(spec.options || []).flatMap((opt) =>
+                    // 兼容：如果选项中包含逗号（中文或英文），拆分为多个选项
+                    opt.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+                  ).map((opt) => (
                     <SelectItem key={opt} value={opt}>
                       {opt}
                     </SelectItem>

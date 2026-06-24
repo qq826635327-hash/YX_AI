@@ -126,14 +126,23 @@ class ProviderHandler(ABC):
     # 参数校验
     # ============================================================
 
-    def validate_params(self, model: str, params: dict) -> list[str]:
-        """校验参数，返回错误列表（空列表 = 全部合法）。"""
-        errors = []
-        model_config = self.SUPPORTED_MODELS.get(model)
-        if not model_config:
-            return errors
+    def validate_params(self, model: str, params: dict, param_specs_override: list | None = None) -> list[str]:
+        """校验参数，返回错误列表（空列表 = 全部合法）。
 
-        param_specs = model_config.get("param_specs", [])
+        Args:
+            model: 模型名
+            params: 前端传来的参数
+            param_specs_override: 从 DB 读取的 param_specs（优先于代码中的 SUPPORTED_MODELS）
+        """
+        errors = []
+        param_specs = param_specs_override
+        if param_specs is None:
+            model_config = self.SUPPORTED_MODELS.get(model)
+            if model_config:
+                param_specs = model_config.get("param_specs", [])
+            else:
+                param_specs = []
+
         for spec in param_specs:
             key = spec["key"]
             required = spec.get("required", False)
@@ -225,6 +234,12 @@ class ProviderHandler(ABC):
         timeout = timeout or getattr(self, "_timeout", 120)
 
         # 构建标准请求
+        # 将 params 中的非标准字段收集到 extra 中（如 ratio 等）
+        _standard_keys = {"size", "reference_images", "count", "negative_prompt", "extra", "model", "prompt"}
+        extra = dict(params.get("extra", {}))
+        for k, v in params.items():
+            if k not in _standard_keys:
+                extra[k] = v
         request = StandardGenerateRequest(
             model=model,
             prompt=prompt,
@@ -232,7 +247,7 @@ class ProviderHandler(ABC):
             reference_images=params.get("reference_images", []),
             count=params.get("count", 1),
             negative_prompt=params.get("negative_prompt"),
-            extra=params.get("extra", {}),
+            extra=extra,
         )
 
         # translate: 标准请求 → 厂商 API 请求
@@ -285,6 +300,7 @@ class ProviderHandler(ABC):
             raise ValueError("API 未返回图片 URL")
 
         logger.info(f"[{self.__class__.__name__}] 生成成功，返回 {len(result.image_urls)} 张图片 ({duration_ms}ms)")
+        self._last_result = result  # 供调用方读取 usage/duration 等元数据
         return result.image_urls
 
     # ============================================================
@@ -299,6 +315,8 @@ class ProviderHandler(ABC):
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: int = 120,
+        resume_video_id: str | None = None,
+        on_submitted: Any = None,
     ) -> list[str]:
         """调用服务商 API 生成视频，返回视频 URL 列表。
 
@@ -314,6 +332,9 @@ class ProviderHandler(ABC):
             api_key: API Key
             base_url: 自定义 base URL
             timeout: 请求超时时间（秒）
+            resume_video_id: 断点续传用的视频任务 ID（跳过提交，直接轮询）
+            on_submitted: 提交成功后的异步回调 async fn(video_id)，
+                          用于立即持久化 video_id，防止中断丢失
 
         Returns:
             list[str]: 生成的视频 URL 列表
@@ -322,18 +343,4 @@ class ProviderHandler(ABC):
             f"{self.__class__.__name__} 不支持视频生成，请实现 generate_video() 方法"
         )
 
-    # ============================================================
-    # 辅助方法（向后兼容）
-    # ============================================================
 
-    def _build_request_payload(self, model: str, prompt: str, params: dict) -> dict:
-        """将通用 params 转成该服务商 API 的实际请求体（向后兼容）。
-
-        新代码应使用 translate() 方法替代。
-        """
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            **params,
-        }
-        return payload

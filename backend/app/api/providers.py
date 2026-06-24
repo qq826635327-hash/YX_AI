@@ -152,6 +152,23 @@ async def api_get_provider_capabilities(
         for m in available_models
     ]
 
+    # 找到当前选中的模型记录
+    selected_model_record = None
+    if selected_model:
+        selected_model_record = next((m for m in available_models if m.model_name == selected_model), None)
+
+    # 优先从 DB 读取 param_specs 和 capabilities
+    if selected_model_record and selected_model_record.param_specs is not None:
+        caps_dict = selected_model_record.capabilities or {}
+        return ok({
+            "provider_kind": provider.provider_kind,
+            "model": selected_model,
+            "models": model_views,
+            "param_specs": selected_model_record.param_specs,
+            **caps_dict,
+        })
+
+    # Fallback 到 Handler 代码默认值
     if not handler_cls:
         # 未找到 Handler，返回空 capabilities
         logger.warning(f"[capabilities] 未找到 Handler: provider_kind={provider.provider_kind}，已注册的 Handler: {list_registered()}")

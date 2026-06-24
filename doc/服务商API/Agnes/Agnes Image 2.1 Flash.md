@@ -113,13 +113,17 @@ agnes-image-2.1-flash
 
 | 参数                         | 类型       | 是否必填  | 说明                                |
 | -------------------------- | -------- | ----- | --------------------------------- |
-| model                      | string   | 是     | 模型名称，固定使用 agnes-image-2.1-flash   |
+| model                      | string   | 是     | 模型名称，固定使用 agnes-image-2.1-flash   |
 | prompt                     | string   | 是     | 图片生成或图片编辑提示词                      |
-| size                       | string   | 是     | 输出图片尺寸，例如 1024x768                |
+| size                       | string   | 是     | 输出图片尺寸，支持档位（`1K`/`2K`/`4K`）或 `宽x高` 格式 |
+| ratio                      | string   | 否     | 画面比例，如 `16:9` / `9:16` / `1:1` / `4:3` / `3:4`，搭配档位 size 使用 |
 | image                      | string[] | 图生图必填 | 输入图片数组，支持公网 URL 或 Data URI Base64 |
 | return_base64              | boolean  | 否     | 文生图需要返回 Base64 时使用                |
 | extra_body                 | object   | 否     | 高级工作流扩展参数                         |
-| extra_body.response_format | string   | 否     | 输出格式，常用值为 url 或 b64_json          |
+| extra_body.response_format | string   | 否     | 输出格式，常用值为 url 或 b64_json          |
+| extra_body.ratio           | string   | 否     | 画面比例（双保险，与顶层 ratio 同时传递）         |
+
+> **高分辨率推荐写法**：使用 `size` 档位 + `ratio` 参数（如 `size: "2K", ratio: "16:9"`），`ratio` 必须同时放在顶层和 `extra_body` 中。详见 [Agnes高分辨率调用避坑指南](./Agnes高分辨率调用避坑指南.md)。
 
 
 ---

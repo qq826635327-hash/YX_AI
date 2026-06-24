@@ -228,9 +228,10 @@ export function useUpdateShot(_projectId: string) {
   return useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) =>
       shotsApi.update(id, payload),
-    onSuccess: () => {
+    onSuccess: (_data, { id }) => {
+      // invalidate 列表 + 单条详情，确保右侧属性面板也刷新
       qc.invalidateQueries({ queryKey: ["shots"] });
-      toast.success("分镜已更新");
+      qc.invalidateQueries({ queryKey: ["shot", id] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -260,6 +261,19 @@ export function useDeleteEpisode(projectId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: episodeKeys.list(projectId) });
       toast.success("剧集已删除");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useUpdateEpisode(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & Partial<import("@/types").Episode>) =>
+      episodesApi.update(projectId, id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: episodeKeys.list(projectId) });
+      toast.success("剧集已更新");
     },
     onError: (e: Error) => toast.error(e.message),
   });

@@ -39,4 +39,14 @@ export const assetsApi = {
     unwrap<{ checked: number; cleaned: number; discovered: number; errors: number; details: { action?: string; asset_id: string; file_name: string; file_path?: string; target_type?: string; target_id?: string }[] }>(
       http.post("assets/sync", { searchParams: { project_id: projectId }, json: {} })
     ),
+
+  /** 双向同步目录：DB↔磁盘（补建缺失目录 + 清理孤立 DB 记录） */
+  syncDirs: (projectId: string, direction: "both" | "db_to_disk" | "disk_to_db" = "both") =>
+    unwrapFull<{ db_to_disk?: { created: number; skipped: number; removed: number; errors: number }; disk_to_db?: { checked: number; deleted: number; errors: number }; created?: number; skipped?: number; removed?: number; checked?: number; deleted?: number; errors?: number }>(
+      http.post("assets/sync-dirs", { searchParams: { project_id: projectId, direction } })
+    ),
+
+  /** 用系统文件管理器打开本地目录 */
+  openDir: (path: string) =>
+    unwrapFull<null>(http.post("assets/open-dir", { searchParams: { path } })),
 };

@@ -20,3 +20,9 @@ class ScriptDocument(IDMixin, TimestampMixin, table=True):
     parse_status: str = Field(default="none", max_length=20)
     parse_error: Optional[str] = Field(default=None)
     parsed_at: Optional[str] = Field(default=None, max_length=50)
+    # 当前解析阶段：reading / character / episode / shot / writing
+    current_stage: Optional[str] = Field(default=None, max_length=20)
+    # 已完成阶段列表 JSON: [{"stage":"reading","summary":"读取完成"}, ...]
+    completed_stages: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    # 解析前快照：保存解析前的实体数据，用于取消时恢复
+    pre_parse_snapshot: Optional[dict] = Field(default=None, sa_column=Column(JSON))

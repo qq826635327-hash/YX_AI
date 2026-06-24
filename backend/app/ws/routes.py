@@ -38,17 +38,25 @@ class ConnectionManager:
                 del self._channels[channel]
 
     async def broadcast(self, channel: str, message: dict) -> None:
-        """向某个频道所有连接广播消息。"""
+        """向某个频道所有连接广播消息（并行发送，避免慢连接拖慢整体）。"""
         if channel not in self._channels:
             return
-        dead = []
         text = json.dumps(message, ensure_ascii=False, default=str)
-        for ws in self._channels[channel]:
+        # 复制快照遍历，避免 disconnect() 并发修改 set 导致 RuntimeError
+        peers = list(self._channels[channel])
+        if not peers:
+            return
+
+        # 并行发送，单个连接异常不阻塞其他连接
+        async def _safe_send(ws: WebSocket) -> WebSocket | None:
             try:
                 await ws.send_text(text)
-            except Exception as e:
-                logger.debug(f"WS 广播失败（连接可能已关闭）: {e}")
-                dead.append(ws)
+                return None  # 发送成功
+            except Exception:
+                return ws  # 返回死连接
+
+        results = await asyncio.gather(*[_safe_send(ws) for ws in peers])
+        dead = [ws for ws in results if ws is not None]
         for ws in dead:
             self._channels[channel].discard(ws)
 
@@ -125,6 +133,12 @@ async def ws_logs(websocket: WebSocket):
     await _ws_channel_handler(websocket, "logs", extra_commands={"clear": handle_clear})
 
 
+@ws_router.websocket("/ws/perf")
+async def ws_perf(websocket: WebSocket):
+    """性能告警实时推送频道。"""
+    await _ws_channel_handler(websocket, "perf")
+
+
 # ============================================================
 # 对外推送接口（供业务层调用）
 # ============================================================
@@ -143,21 +157,46 @@ async def push_task_progress(task_id: str, progress: int, **extra) -> None:
     )
 
 
-async def push_task_completed(task_id: str, **extra) -> None:
-    await manager.broadcast("tasks", make_message("task.completed", {"task_id": task_id, **extra}))
+async def push_task_completed(task_id: str, target_type: str = "", **extra) -> None:
+    await manager.broadcast("tasks", make_message("task.completed", {"task_id": task_id, "target_type": target_type, **extra}))
 
 
-async def push_task_failed(task_id: str, error: str, **extra) -> None:
+async def push_task_failed(task_id: str, error: str, target_type: str = "", **extra) -> None:
     await manager.broadcast(
         "tasks",
-        make_message("task.failed", {"task_id": task_id, "error": error, **extra}),
+        make_message("task.failed", {"task_id": task_id, "error": error, "target_type": target_type, **extra}),
     )
 
 
 async def push_script_progress(project_id: str, stage: str, **extra) -> None:
+    """推送解析阶段进度（含已完成步骤列表，供前端重挂载时恢复状态）。"""
     await manager.broadcast(
         "script",
         make_message("script.parsing", {"project_id": project_id, "stage": stage, **extra}),
+    )
+
+
+async def push_script_stream(project_id: str, stage: str, tokens: str) -> None:
+    """推送 LLM 流式输出 token（批量，约每 100ms 一次）。"""
+    await manager.broadcast(
+        "script",
+        make_message("script.stream", {"project_id": project_id, "stage": stage, "tokens": tokens}),
+    )
+
+
+async def push_script_stage_done(project_id: str, stage: str, summary: str = "", completed_stages: list | None = None, **extra) -> None:
+    """推送某个解析阶段完成。"""
+    data = {
+        "project_id": project_id,
+        "stage": stage,
+        "summary": summary,
+        **extra,
+    }
+    if completed_stages is not None:
+        data["completed_stages"] = completed_stages
+    await manager.broadcast(
+        "script",
+        make_message("script.stage_done", data),
     )
 
 

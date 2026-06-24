@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.core.serialization import serialize_model, serialize_models
@@ -11,6 +12,10 @@ from app.models import Scene
 from app.schemas.business import SceneCreate, SceneUpdate
 from app.schemas.common import ok
 from app.services import business_service
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
 
 router = APIRouter(prefix="/projects/{project_id}/scenes", tags=["scenes"])
 
@@ -29,6 +34,28 @@ async def api_create_scene(
 ):
     scene = business_service.create_entity(session, Scene, project_id, payload.model_dump())
     return ok(serialize_model(scene), message="场景已创建")
+
+
+@router.post("/batch-delete")
+async def api_batch_delete_scenes(
+    project_id: str,
+    payload: BatchDeleteRequest,
+    session: Session = Depends(get_session),
+):
+    """批量删除场景。"""
+    deleted = 0
+    errors = []
+    for sid in payload.ids:
+        scene = business_service.get_one(session, Scene, sid)
+        if scene and scene.project_id == project_id:
+            success = business_service.delete_entity(session, Scene, sid)
+            if success:
+                deleted += 1
+            else:
+                errors.append({"id": sid, "error": "删除失败"})
+        else:
+            errors.append({"id": sid, "error": "场景不存在"})
+    return ok({"deleted": deleted, "errors": errors}, message=f"已删除 {deleted} 个场景")
 
 
 @router.get("/{scene_id}")

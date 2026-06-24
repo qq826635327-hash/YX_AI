@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 class CharacterCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
+    gender: Optional[str] = None
+    age: Optional[str] = None
     char_type: str = Field(default="supporting", pattern="^(protagonist|supporting|extra)$")
     description: Optional[str] = None
     settings: Optional[str] = None
@@ -20,6 +22,8 @@ class CharacterCreate(BaseModel):
 
 class CharacterUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    gender: Optional[str] = None
+    age: Optional[str] = None
     char_type: Optional[str] = Field(default=None, pattern="^(protagonist|supporting|extra)$")
     description: Optional[str] = None
     settings: Optional[str] = None
@@ -36,12 +40,14 @@ class SceneCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     settings: Optional[str] = None
+    camera_hint: Optional[str] = None
 
 
 class SceneUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = None
     settings: Optional[str] = None
+    camera_hint: Optional[str] = None
     image_asset_id: Optional[str] = None
     gen_status: Optional[str] = None
     sort_order: Optional[int] = None
@@ -93,6 +99,9 @@ class ShotCreate(BaseModel):
     first_frame_prompt: Optional[str] = None
     last_frame_prompt: Optional[str] = None
     video_prompt: Optional[str] = None
+    camera_size: Optional[str] = None
+    camera_angle: Optional[str] = None
+    camera_movement: Optional[str] = None
 
 
 class ShotUpdate(BaseModel):
@@ -107,4 +116,7 @@ class ShotUpdate(BaseModel):
     video_prompt: Optional[str] = None
     video_asset_id: Optional[str] = None
     video_status: Optional[str] = None
+    camera_size: Optional[str] = None
+    camera_angle: Optional[str] = None
+    camera_movement: Optional[str] = None
     sort_order: Optional[int] = None

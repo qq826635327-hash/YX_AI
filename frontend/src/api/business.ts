@@ -24,6 +24,11 @@ export const charactersApi = {
 
   delete: (projectId: string, id: string) =>
     unwrapFull<null>(http.delete(`projects/${projectId}/characters/${id}`)),
+
+  batchDelete: (projectId: string, ids: string[]) =>
+    unwrapFull<{ deleted: number; errors: Array<{ id: string; error: string }> }>(
+      http.post(`projects/${projectId}/characters/batch-delete`, { json: { ids } })
+    ),
 };
 
 // ============================================================
@@ -44,6 +49,11 @@ export const scenesApi = {
 
   delete: (projectId: string, id: string) =>
     unwrapFull<null>(http.delete(`projects/${projectId}/scenes/${id}`)),
+
+  batchDelete: (projectId: string, ids: string[]) =>
+    unwrapFull<{ deleted: number; errors: Array<{ id: string; error: string }> }>(
+      http.post(`projects/${projectId}/scenes/batch-delete`, { json: { ids } })
+    ),
 };
 
 // ============================================================
@@ -64,4 +74,9 @@ export const propsApi = {
 
   delete: (projectId: string, id: string) =>
     unwrapFull<null>(http.delete(`projects/${projectId}/props/${id}`)),
+
+  batchDelete: (projectId: string, ids: string[]) =>
+    unwrapFull<{ deleted: number; errors: Array<{ id: string; error: string }> }>(
+      http.post(`projects/${projectId}/props/batch-delete`, { json: { ids } })
+    ),
 };

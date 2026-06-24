@@ -4,48 +4,58 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    /* 全局深色影视工作台主题 */
+    --background: 228 17% 4%;          /* #08090d 极深蓝黑 */
+    --foreground: 220 14% 90%;         /* #e3e5e9 主文字 */
+
+    --card: 228 14% 9%;                /* #14161d 面板背景 */
+    --card-foreground: 220 14% 92%;
+
+    --popover: 228 14% 11%;            /* #181a23 弹窗/下拉背景 */
+    --popover-foreground: 220 14% 92%;
+
+    --primary: 45 93% 56%;             /* #f5c233 金黄主色 */
+    --primary-foreground: 228 20% 6%;  /* 深色文字 */
+
+    --secondary: 228 12% 15%;          /* #1c1e27 次按钮/标签背景 */
+    --secondary-foreground: 220 14% 88%;
+
+    --muted: 228 12% 18%;              /* #22252f 禁用/分隔背景 */
+    --muted-foreground: 220 10% 55%;   /* #868b9a 次要文字 */
+
+    --accent: 228 12% 20%;             /* #262a35 hover 背景 */
+    --accent-foreground: 220 14% 92%;
+
+    --destructive: 0 72% 56%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 228 12% 19%;             /* #252836 边框 */
+    --input: 228 12% 15%;              /* 输入框背景 */
+    --ring: 45 93% 56%;                /* 聚焦环金黄 */
+
+    --radius: 0.75rem;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --background: 228 17% 4%;
+    --foreground: 220 14% 90%;
+    --card: 228 14% 9%;
+    --card-foreground: 220 14% 92%;
+    --popover: 228 14% 11%;
+    --popover-foreground: 220 14% 92%;
+    --primary: 45 93% 56%;
+    --primary-foreground: 228 20% 6%;
+    --secondary: 228 12% 15%;
+    --secondary-foreground: 220 14% 88%;
+    --muted: 228 12% 18%;
+    --muted-foreground: 220 10% 55%;
+    --accent: 228 12% 20%;
+    --accent-foreground: 220 14% 92%;
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 228 12% 19%;
+    --input: 228 12% 15%;
+    --ring: 45 93% 56%;
   }
 }
 
@@ -54,23 +64,33 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
-/* 自定义滚动条 */
+/* 自定义滚动条：更纤细、半透明 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.25) transparent;
+}
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.3);
-  border-radius: 4px;
+  background: hsl(var(--muted-foreground) / 0.25);
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--muted-foreground) / 0.45);
+}
+
+/* 全局选中文本颜色 */
+::selection {
+  background: hsl(var(--primary) / 0.35);
+  color: hsl(var(--foreground));
 }

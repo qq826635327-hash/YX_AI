@@ -61,4 +61,11 @@ class ProviderModel(IDMixin, TimestampMixin, table=True):
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     sort_order: int = Field(default=0)
 
+    # 模型参数规范（数据驱动，优先于 Handler 代码中的 SUPPORTED_MODELS）
+    # 格式同 SUPPORTED_MODELS[model].param_specs，为 None 时 fallback 到 Handler 代码
+    param_specs: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    # 模型能力声明（数据驱动，优先于 Handler 代码中的 ModelCapabilities）
+    # 格式同 ModelCapabilities.to_dict()，为 None 时 fallback 到 Handler 代码
+    capabilities: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
     provider: Optional[ApiProvider] = Relationship(back_populates="models")

@@ -17,6 +17,8 @@ class Character(IDMixin, TimestampMixin, table=True):
 
     project_id: str = Field(foreign_key="projects.id", index=True, max_length=36, ondelete="CASCADE")
     name: str = Field(index=True, max_length=200)
+    gender: Optional[str] = Field(default=None, max_length=20, description="性别：男/女/其他")
+    age: Optional[str] = Field(default=None, max_length=50, description="年龄描述")
     char_type: str = Field(default="protagonist", max_length=20)
     description: Optional[str] = Field(default=None)
     settings: Optional[str] = Field(default=None)

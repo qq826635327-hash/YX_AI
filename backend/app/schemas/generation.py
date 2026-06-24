@@ -28,11 +28,6 @@ class GenerateRequest(BaseModel):
     size: Optional[str] = None
     count: int = Field(default=1, ge=1, le=10)
     reference_asset_ids: list[str] = Field(default_factory=list)
-    reference_preset: str = Field(
-        default="full",
-        pattern="^(full|first_frame_only|first_and_last_frame|none)$",
-        description="参考图注入策略：full / first_frame_only / first_and_last_frame / none",
-    )
     extra_params: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -74,18 +69,13 @@ class BatchGenerateRequest(BaseModel):
     size: Optional[str] = None
     count: int = Field(default=1, ge=1, le=10)
     reference_asset_ids: list[str] = Field(default_factory=list)
-    reference_preset: str = Field(
-        default="full",
-        pattern="^(full|first_frame_only|first_and_last_frame|none)$",
-        description="参考图注入策略：full / first_frame_only / first_and_last_frame / none",
-    )
     extra_params: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def check_provider_id(self):
         """api 模式下必须指定 provider_id。"""
         if self.provider_type == "api" and not self.provider_id:
-            raise ValueError("api 模式必须指定 provider_id")
+            raise ValueError("api 模式下必须指定 provider_id")
         if self.provider_type == "comfyui":
             raise ValueError("ComfyUI 执行器尚未实现，请使用 api 模式")
         return self
@@ -102,6 +92,9 @@ class ProviderModelItem(BaseModel):
     model_name: str = Field(..., min_length=1, max_length=100)
     tags: list[str] = Field(default_factory=list)
     sort_order: int = Field(default=0)
+    # 数据驱动的参数规范和能力声明（为 None 时 fallback 到 Handler 代码）
+    param_specs: Optional[list[dict[str, Any]]] = None
+    capabilities: Optional[dict[str, Any]] = None
 
 
 class ProviderCreate(BaseModel):
@@ -139,6 +132,8 @@ class ProviderModelView(BaseModel):
     model_name: str
     tags: list[str]
     sort_order: int
+    param_specs: Optional[list[dict[str, Any]]] = None
+    capabilities: Optional[dict[str, Any]] = None
 
 
 class ProviderView(BaseModel):
@@ -258,17 +253,10 @@ class ProviderCapabilitiesView(BaseModel):
     batch_support: bool = False
     max_count: int = 1
     reference_image: bool = False
+    max_reference_images: int = 0
+    supports_negative_prompt: bool = False
+    reference_images_need_url: bool = False
+    # 视频参考图配置
+    video_reference_types: list[str] = Field(default_factory=lambda: ["first_frame", "last_frame", "character", "scene", "prop"])
+    video_reference_hint: str = ""
     extra_fields: list[dict[str, Any]] = Field(default_factory=list)
-
-
-# ============================================================
-# LLM 配置更新
-# ============================================================
-
-class LLMConfigUpdate(BaseModel):
-    """LLM 配置运行时更新（所有字段可选，仅更新传入的字段）。"""
-    enabled: Optional[bool] = None
-    provider: Optional[str] = None
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
-    model: Optional[str] = None

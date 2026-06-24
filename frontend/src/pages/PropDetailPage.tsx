@@ -1,8 +1,8 @@
 /** 道具详情页。 */
 
 import { useState, useCallback, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Pencil, RefreshCw, Upload, Trash2, Package } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { RefreshCw, Upload } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { PageContainer, LoadingState } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -12,28 +12,35 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { AssetGallery } from "@/components/AssetGallery";
-import { useProp, useUpdateProp, useDeleteProp } from "@/hooks/useBusiness";
+import { useProp, useUpdateProp } from "@/hooks/useBusiness";
 import { useAssetDetail } from "@/hooks/useAssetDetail";
+import { useUiStore } from "@/stores/ui";
 import type { Prop } from "@/types";
 
 export function PropDetailPage() {
   const { projectId, propId } = useParams();
-  const navigate = useNavigate();
   const qc = useQueryClient();
+  const setSelectedEntity = useUiStore((s) => s.setSelectedEntity);
 
   const [editing, setEditing] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
 
+  // 加载到详情页时同步设置右侧属性面板
+  useEffect(() => {
+    if (projectId && propId) {
+      setSelectedEntity({ type: "prop", id: propId, projectId });
+    }
+  }, [projectId, propId, setSelectedEntity]);
+
   const { data: prop, isLoading: propLoading, refetch: refetchProp } =
     useProp(projectId!, propId!);
   const updateMutation = useUpdateProp(projectId!);
-  const deleteMutation = useDeleteProp(projectId!);
 
   // 设为主图回调
   const handleSetPrimary = useCallback(
     (assetId: string) => {
       updateMutation.mutate(
-        { id: propId!, payload: { image_asset_id: assetId } },
+        { id: propId!, payload: { image_asset_id: assetId || null } },
         { onSuccess: () => { refetchProp(); qc.invalidateQueries({ queryKey: ["props"] }); } }
       );
     },
@@ -64,25 +71,17 @@ export function PropDetailPage() {
     onRefetchEntity: refetchProp,
   });
 
-  const handleDelete = () => {
-    if (!confirm(`确认删除道具「${prop?.name}」？`)) return;
-    deleteMutation.mutate(propId!, { onSuccess: () => navigate(`/projects/${projectId}/props`) });
-  };
-
   if (propLoading || !prop) return <LoadingState />;
 
   return (
     <>
       <PageContainer
-        title=""
+        title={prop.name}
         description=""
         showBack
         backTo={`/projects/${projectId}/props`}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-              <Pencil className="mr-1 h-3.5 w-3.5" />编辑
-            </Button>
             <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               <Upload className="mr-1 h-3.5 w-3.5" />
               {uploading ? "上传中..." : "上传图片"}
@@ -93,39 +92,6 @@ export function PropDetailPage() {
           </div>
         }
       >
-        {/* 道具信息 */}
-        <div className="mb-8 grid gap-6 lg:grid-cols-3">
-          <Card className="overflow-hidden">
-            <div className="flex aspect-square items-center justify-center bg-muted">
-              {prop.image_asset_id ? (
-                <img src={`/api/assets/${prop.image_asset_id}/file`} alt={prop.name} className="h-full w-full object-cover" />
-              ) : (
-                <Package className="h-16 w-16 text-muted-foreground/40" />
-              )}
-            </div>
-          </Card>
-
-          <div className="space-y-4 lg:col-span-2">
-            <h1 className="text-2xl font-bold">{prop.name}</h1>
-            {prop.description && (
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">描述</p>
-                <p className="whitespace-pre-wrap text-sm">{prop.description}</p>
-              </div>
-            )}
-            {prop.settings && (
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">生成设定</p>
-                <p className="whitespace-pre-wrap text-sm text-muted-foreground">{prop.settings}</p>
-              </div>
-            )}
-            <Button variant="outline" size="sm" onClick={handleDelete}
-              className="text-destructive hover:bg-destructive/10">
-              <Trash2 className="mr-1 h-3.5 w-3.5" />删除道具
-            </Button>
-          </div>
-        </div>
-
         {/* 图片画廊（通用组件） */}
         <AssetGallery
           imageAssets={imageAssets}
